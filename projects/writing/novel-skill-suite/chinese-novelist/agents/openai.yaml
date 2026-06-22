@@ -1,0 +1,5 @@
+interface:
+  display_name: "Chinese Novelist"
+  short_description: "分章节创作并润色中文长篇小说"
+  default_prompt: "Use $chinese-novelist to plan and draft a chapter-by-chapter Chinese novel."
+

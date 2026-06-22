@@ -1,0 +1,7 @@
+interface:
+  display_name: "作家工具箱"
+  short_description: "把小说结构转成创作资产并继续用于原创写作"
+  default_prompt: "Use $novel-writer-lens to convert extracted novel structure into original writing assets, then use those assets to plan, draft, revise, and quality-check original fiction."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "writer_assets.schema.json",
+  "title": "Novel Writer Asset Bundle",
+  "type": "object",
+  "required": ["novel_id", "book_title", "genre_guess", "character_cards", "role_cards", "plot_template", "conflict_template", "scene_template", "rhythm_template", "prompt_seed"],
+  "properties": {
+    "novel_id": { "type": "string" },
+    "book_title": { "type": "string" },
+    "source_book_dir": { "type": "string" },
+    "genre_guess": { "type": "string" },
+    "genre_reason": { "type": "string" },
+    "character_cards": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/character_card" }
+    },
+    "role_cards": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/role_card" }
+    },
+    "plot_template": { "$ref": "#/$defs/template_block" },
+    "conflict_template": { "$ref": "#/$defs/template_block" },
+    "scene_template": { "$ref": "#/$defs/template_block" },
+    "rhythm_template": { "$ref": "#/$defs/template_block" },
+    "prompt_seed": { "type": "string" }
+  },
+  "$defs": {
+    "evidence_ref": {
+      "type": "object",
+      "required": ["novel_id", "file_path", "chapter_id", "start_char", "end_char"],
+      "properties": {
+        "novel_id": { "type": "string" },
+        "file_path": { "type": "string" },
+        "chapter_id": { "type": "string" },
+        "start_char": { "type": "integer", "minimum": 0 },
+        "end_char": { "type": "integer", "minimum": 0 },
+        "excerpt": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "character_card": {
+      "type": "object",
+      "required": ["name", "role_guess", "function", "drive", "conflict_focus", "growth_axis", "evidence"],
+      "properties": {
+        "name": { "type": "string" },
+        "role_guess": { "type": "string" },
+        "function": { "type": "string" },
+        "drive": { "type": "string" },
+        "conflict_focus": { "type": "string" },
+        "growth_axis": { "type": "string" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    },
+    "role_card": {
+      "type": "object",
+      "required": ["role_name", "function", "drive", "conflict_focus", "growth_axis", "evidence"],
+      "properties": {
+        "role_name": { "type": "string" },
+        "function": { "type": "string" },
+        "drive": { "type": "string" },
+        "conflict_focus": { "type": "string" },
+        "growth_axis": { "type": "string" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    },
+    "template_block": {
+      "type": "object",
+      "required": ["title", "summary", "pattern", "examples"],
+      "properties": {
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "pattern": { "type": "string" },
+        "examples": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+

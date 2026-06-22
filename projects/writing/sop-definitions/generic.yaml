@@ -1,0 +1,51 @@
+id: generic
+project_kind: generic
+label: 通用创作 SOP
+default_mode: parallel_collect_then_serial_merge
+roles:
+  planner:
+    label: 结构规划
+    duty: 负责目标、结构、材料排序和输出边界。
+  drafter:
+    label: 草稿执笔
+    duty: 负责把材料转成可继续编辑的正文/草稿。
+  reviewer:
+    label: 质量审查
+    duty: 负责检查遗漏、矛盾、格式和用户要求覆盖。
+tasks:
+  outline:
+    stage: 结构规划
+    role: planner
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 输出必须有层次、目标和下一步可执行内容。
+    review_focus:
+      - 是否覆盖用户目标。
+  materials:
+    stage: 材料整理
+    role: planner
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 必须区分已知材料、推断内容和待确认问题。
+    review_focus:
+      - 材料是否可追溯。
+  draft:
+    stage: 草稿生成
+    role: drafter
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 必须基于项目材料和用户要求输出可编辑草稿。
+    review_focus:
+      - 结构是否清晰。
+  fix:
+    stage: 修订
+    role: reviewer
+    mode: serial_repair
+    confirmation_gate: final_acceptance
+    hard_rules:
+      - 必须针对明确问题修订，不新增无关内容。
+    review_focus:
+      - 修订是否解决问题。

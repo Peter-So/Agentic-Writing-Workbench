@@ -1,0 +1,88 @@
+id: novel_001
+project_kind: novel_strong
+label: 小说强规范创作 SOP
+default_mode: parallel_collect_then_serial_merge
+roles:
+  story_architect:
+    label: 故事架构师
+    duty: 负责主线目标、章节功能、冲突推进和结构完整性。
+  character_designer:
+    label: 角色设计师
+    duty: 负责人物欲望、阻碍、声音、关系张力和行为一致性。
+  prose_writer:
+    label: 正文执笔
+    duty: 负责场景化叙事、动作细节、对白潜台词和语言质感。
+  continuity_reviewer:
+    label: 连续性审查
+    duty: 负责时间线、设定、人物状态、伏笔与前文章节一致性。
+  rule_reviewer:
+    label: 硬规则预审
+    duty: 负责禁用表达、材料可追溯、重复句和章节规范。
+tasks:
+  character:
+    stage: 角色设计
+    role: character_designer
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 人物必须有明确欲望、阻碍、外显行为和语言特征。
+      - 不能只给标签化性格，必须给可写入正文的动作/对白样例。
+    review_focus:
+      - 人物动机是否能驱动章节冲突。
+      - 人物声音是否和项目既有材料一致。
+  outline:
+    stage: 大纲搭建
+    role: story_architect
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 大纲必须包含事件因果、压力升级、转折和章末钩子。
+      - 不得只输出主题总结或设定罗列。
+    review_focus:
+      - 章节目标是否清晰。
+      - 冲突推进是否可落到场景。
+  beat_sheet:
+    stage: 情节节拍
+    role: story_architect
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 每个节拍必须有场景、人物行动、阻力、变化和余味。
+      - 节拍之间必须存在因果推进。
+    review_focus:
+      - 是否有压力源、延迟、释放。
+      - 是否为正文生成提供足够动作材料。
+  prose:
+    stage: 正文生成
+    role: prose_writer
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 正文必须场景化，避免段尾升华、心理机制命名和空洞总结。
+      - 重要段落必须能追溯到大纲、人物或已确认材料。
+      - 生成后必须进入硬规则预审和模型交叉审查。
+    review_focus:
+      - 人物行动是否替代了解释。
+      - 章节节奏、伏笔和连续性是否成立。
+  expansion:
+    stage: 扩写
+    role: prose_writer
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 扩写必须保留原场景目标，不得改写主线事实。
+      - 必须增加动作、感官、对白或阻力，而不是堆形容词。
+    review_focus:
+      - 是否补足薄弱段落的可读性。
+      - 是否破坏既有连续性。
+  fix:
+    stage: 修复
+    role: rule_reviewer
+    mode: serial_repair
+    confirmation_gate: final_acceptance
+    hard_rules:
+      - 修复必须对应用户指出的问题或审查报告中的阻断项。
+      - 不得在修复时新增未确认设定。
+    review_focus:
+      - 阻断项是否真正消除。
+      - 修改是否引入新矛盾。

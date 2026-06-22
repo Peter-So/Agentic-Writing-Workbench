@@ -1,0 +1,8 @@
+interface:
+  display_name: "结构提炼器"
+  short_description: "提取大纲、人物、成长线与体系"
+  default_prompt: "Use $novel-structure-extractor to turn the indexed novel corpus into evidence-backed outlines, chapter summaries, character files, and arcs."
+
+policy:
+  allow_implicit_invocation: true
+

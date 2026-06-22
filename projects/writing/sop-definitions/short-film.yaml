@@ -1,0 +1,132 @@
+id: short_film_002
+project_kind: short_film
+label: 电影短片创作 SOP
+default_mode: parallel_collect_then_serial_merge
+roles:
+  concept_developer:
+    label: 概念开发
+    duty: 负责主题、主角处境、核心冲突、选择代价和结尾余味。
+  character_designer:
+    label: 角色设计
+    duty: 负责人物欲望、阻碍、关系、秘密、弧光和可表演动作。
+  beat_editor:
+    label: 节拍编辑
+    duty: 负责开场、触发、压力升级、反转、最后选择和余味。
+  screenwriter:
+    label: 剧本执笔
+    duty: 负责场景标题、动作、角色名、对白、声音和可拍摄性。
+  storyboard_director:
+    label: 分镜导演
+    duty: 负责镜号、景别、机位、运动、画面、声音和拍摄备注。
+  script_doctor:
+    label: 剧本医生
+    duty: 负责修复节奏、对白、逻辑、动作和可拍摄性。
+tasks:
+  logline:
+    stage: 概念开发
+    role: concept_developer
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - id: short-film-concept-not-single-logline
+        text: 概念不是一句话压缩稿，必须形成可扩展为剧本的开发材料。
+        severity: blocker
+        predicate:
+          type: prompt_pattern_absent
+          scope: output_requirements
+          forbidden:
+            - 一句话故事
+            - 不超过\s*50\s*字
+            - 50\s*字以内
+            - 只输出.*logline
+      - id: short-film-concept-required-fields
+        text: 必须包含主角、欲望、阻碍、选择代价、主题和结尾余味。
+        severity: blocker
+        predicate:
+          type: prompt_contains_all
+          required:
+            - 主角
+            - 欲望
+            - 阻碍
+            - 选择代价
+            - 主题
+            - 结尾余味
+    review_focus:
+      - 是否能支撑后续角色、节拍和剧本。
+      - 是否有明确可拍摄冲突。
+  character:
+    stage: 角色设计
+    role: character_designer
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 角色必须有可表演动作和关系张力。
+      - 不得只输出抽象心理标签。
+    review_focus:
+      - 欲望和阻碍是否清晰。
+      - 角色弧光是否能服务短片时长。
+  beat_sheet:
+    stage: 节拍表
+    role: beat_editor
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - 每个节拍必须包含画面、冲突、转折和声音线索。
+      - 节拍必须服务短片片长，不得扩成长篇大纲。
+    review_focus:
+      - 压力是否逐步升级。
+      - 反转和结尾余味是否成立。
+  screenplay:
+    stage: 剧本正文
+    role: screenwriter
+    mode: parallel_collect_then_serial_merge
+    confirmation_gate: material_selection
+    hard_rules:
+      - id: screenplay-format-required
+        text: 必须使用影视脚本格式：场景标题、动作、角色、对白。
+        severity: blocker
+        predicate:
+          type: prompt_contains_all
+          required:
+            - 场景标题
+            - 动作
+            - 角色
+            - 对白
+      - 禁止小说化长篇心理旁白。
+      - 生成后必须能进入分镜/生图提示词流程。
+    review_focus:
+      - 是否可拍。
+      - 对白是否有潜台词。
+      - 动作和声音是否承担叙事。
+  shot_list:
+    stage: 分镜镜头表
+    role: storyboard_director
+    mode: serial_transform
+    confirmation_gate: final_acceptance
+    hard_rules:
+      - id: shot-list-fields-required
+        text: 必须包含镜号、景别、机位/运动、画面、声音、备注。
+        severity: blocker
+        predicate:
+          type: prompt_contains_all
+          required:
+            - 镜号
+            - 景别
+            - 画面
+            - 声音
+            - 备注
+      - 不得只复述剧情，必须转化成镜头执行信息。
+    review_focus:
+      - 镜头是否覆盖关键节拍。
+      - 是否能直接进入生图提示词。
+  fix:
+    stage: 修订
+    role: script_doctor
+    mode: serial_repair
+    confirmation_gate: final_acceptance
+    hard_rules:
+      - 修订必须对应明确问题：节奏、对白、逻辑、动作或可拍摄性。
+      - 不得改丢已确认的核心命题和结尾余味。
+    review_focus:
+      - 是否消除指定问题。
+      - 是否保留短片整体气质。

@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "project_id": "003",
+  "project_kind": "generic",
+  "updated_at": "2026-06-22T15:43:35",
+  "documents": {
+    "inbox": {
+      "role": "inbox",
+      "label": "随想收集",
+      "path": "随想/随想收集.md",
+      "canonical_path": "随想/随想收集.md",
+      "aliases": [
+        "notes/随想收集.md",
+        "materials.md",
+        "随想.md",
+        "灵感.md"
+      ],
+      "description": "随想随记、零散念头、观察片段和临时记录的入口。"
+    },
+    "ideas": {
+      "role": "ideas",
+      "label": "灵感池",
+      "path": "灵感/灵感池.md",
+      "canonical_path": "灵感/灵感池.md",
+      "aliases": [
+        "ideas/灵感池.md",
+        "outline.md",
+        "结构.md",
+        "灵感池.md"
+      ],
+      "description": "可继续发展的主题、结构、问题、标题和方向。"
+    },
+    "draft": {
+      "role": "draft",
+      "label": "草稿",
+      "path": "草稿/草稿.md",
+      "canonical_path": "草稿/草稿.md",
+      "aliases": [
+        "drafts/草稿.md",
+        "draft.md",
+        "草稿.md"
+      ],
+      "description": "由随想扩展出的草稿、段落和阶段性文本。"
+    },
+    "references": {
+      "role": "references",
+      "label": "参考材料",
+      "path": "参考材料/参考材料.md",
+      "canonical_path": "参考材料/参考材料.md",
+      "aliases": [
+        "references/参考材料.md",
+        "参考材料.md",
+        "素材.md"
+      ],
+      "description": "摘录、链接、素材和可复用资料。"
+    }
+  },
+  "directories": {
+    "notes": {
+      "role": "notes",
+      "path": "随想",
+      "description": "随想随记和灵感入口。"
+    },
+    "ideas": {
+      "role": "ideas",
+      "path": "灵感",
+      "description": "可发展的主题、问题和结构。"
+    },
+    "drafts": {
+      "role": "drafts",
+      "path": "草稿",
+      "description": "草稿和阶段性文本。"
+    },
+    "references": {
+      "role": "references",
+      "path": "参考材料",
+      "description": "参考材料和素材。"
+    },
+    "outputs": {
+      "role": "outputs",
+      "path": "输出",
+      "description": "确认稿、快照和生成物。"
+    },
+    "skills": {
+      "role": "skills",
+      "path": "技能",
+      "description": "项目私有技能。"
+    },
+    "wiki": {
+      "role": "wiki",
+      "path": "维基",
+      "description": "项目级 Wiki。"
+    }
+  },
+  "routing_notes": [
+    "系统写入结构性材料时，应先按 role 查询本文件，再按 aliases/文件名相似度回退。",
+    "历史项目迁移后，旧文件名会保留在 aliases 中，由本 Wiki 路由到新规范路径。",
+    "覆盖式修改属于高风险写入，必须经用户显式确认后执行。"
+  ]
+}

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Writing 协作界面</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260622-kebab-paths-1" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail">
+        <header class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <h1>Writing</h1>
+            <p>协作创作界面</p>
+          </div>
+        </header>
+
+        <section class="panel project-panel">
+          <div class="project-card-head">
+            <div class="panel-title">项目</div>
+            <div class="project-actions">
+              <button id="createProjectBtn" class="project-action-btn primary" type="button">新建</button>
+              <button id="deleteProjectBtn" class="project-action-btn danger" type="button">删除</button>
+            </div>
+          </div>
+          <div id="projectCreateForm" class="project-create-form" hidden>
+            <input id="projectIdInput" class="project-input" maxlength="40" placeholder="项目 ID，如 004" />
+            <select id="projectTypeSelect" class="select compact-select">
+              <option value="novel">小说</option>
+              <option value="short_film">电影脚本</option>
+              <option value="casual">随想</option>
+            </select>
+            <div class="project-create-actions">
+              <button id="submitProjectCreateBtn" class="project-action-btn primary" type="button">创建</button>
+              <button id="cancelProjectCreateBtn" class="project-action-btn" type="button">取消</button>
+            </div>
+          </div>
+          <select id="projectSelect" class="select"></select>
+          <div id="projectProgress" class="project-progress" aria-live="polite"></div>
+          <div id="projectInventory" class="project-inventory" aria-live="polite"></div>
+          <div id="projectActionStatus" class="muted-line"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">文件</div>
+          <div id="fileTree" class="file-tree"></div>
+        </section>
+      </aside>
+
+      <section class="main">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">默认界面</div>
+            <h2 id="workspaceTitle">创作驾驶舱</h2>
+          </div>
+          <div class="model-bar" aria-label="模型选择">
+            <label><span>聊天</span><select id="chatModelSelect" class="select model-select"></select></label>
+            <label><span>创作</span><select id="writingModelSelect" class="select model-select"></select></label>
+            <label><span>审查</span><select id="reviewModelSelect" class="select model-select"></select></label>
+            <label><span>生图</span><select id="imageModelSelect" class="select model-select"></select></label>
+          </div>
+          <nav class="top-actions">
+            <button id="doctorBtn" class="button" type="button">诊断</button>
+          </nav>
+        </header>
+
+        <section id="stageBar" class="stage-bar"></section>
+        <section id="fileEditor" class="file-editor" hidden>
+          <header class="file-editor-head">
+            <div>
+              <div class="eyebrow">文件编辑</div>
+              <h3 id="fileEditorTitle">未选择文件</h3>
+              <p id="fileEditorPath" class="muted-line"></p>
+            </div>
+            <div class="file-editor-actions">
+              <button id="closeFileBtn" class="button ghost" type="button">返回对话</button>
+              <button id="saveFileBtn" class="button primary" type="button" disabled title="只保存当前文件内容，不触发 LLM 分析、记忆、RAG 或联动建议。">保存</button>
+              <button id="rewriteFileBtn" class="button danger" type="button" disabled title="保存当前文件，并执行联动分析：检查关联设定、生成待确认更新建议、刷新项目状态。">改写</button>
+            </div>
+          </header>
+          <textarea id="fileEditorText" spellcheck="false" placeholder="从左侧选择可预览文件"></textarea>
+          <div id="fileEditorStatus" class="muted-line"></div>
+        </section>
+        <section id="wikiViewer" class="wiki-viewer" hidden>
+          <header class="wiki-viewer-head">
+            <div>
+              <div class="eyebrow">项目维基</div>
+              <h3 id="wikiViewerTitle">未选择维基文件</h3>
+              <p id="wikiViewerPath" class="muted-line"></p>
+            </div>
+            <div class="file-editor-actions">
+              <button id="closeWikiBtn" class="button ghost" type="button">返回对话</button>
+            </div>
+          </header>
+          <div class="wiki-layout">
+            <aside class="wiki-index">
+              <div id="wikiViewerSummary" class="wiki-summary muted-line">加载中</div>
+              <div id="wikiViewerList" class="wiki-list"></div>
+            </aside>
+            <article id="wikiViewerContent" class="wiki-content"></article>
+          </div>
+          <div id="wikiViewerStatus" class="muted-line"></div>
+        </section>
+        <section id="messages" class="messages" aria-live="polite"></section>
+
+        <form id="composer" class="composer">
+          <div id="shortFilmActions" class="short-film-actions" hidden>
+            <span>短片</span>
+            <input id="storyboardBeatInput" class="storyboard-beat-input" type="number" min="1" step="1" placeholder="分镜" title="填写分镜编号，只生成该分镜目录；留空则生成全部分镜" />
+            <button id="visualPromptBtn" class="button" type="button">生词</button>
+            <button id="storyboardImagesBtn" class="button" type="button">生图</button>
+          </div>
+          <textarea id="messageInput" placeholder="输入创作需求、场景、角色动作或修订方向"></textarea>
+          <div class="composer-actions">
+            <label class="toggle"><input id="aiToggle" type="checkbox" /> <span>网页模型</span></label>
+            <div id="providerChecks" class="provider-checks"></div>
+            <button id="chatBtn" class="button success" type="button">聊天</button>
+            <button id="sendBtn" class="button primary" type="submit">创作</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="status">
+        <section class="panel status-card mission-panel">
+          <div class="panel-title">任务概览</div>
+          <div id="missionCard" class="mission-card muted-line">加载中</div>
+        </section>
+
+        <section class="panel status-card audit-panel">
+          <div class="panel-title">需求审计</div>
+          <div id="auditCard" class="audit-card muted-line">尚未审计</div>
+        </section>
+
+        <section class="panel status-card sop-panel">
+          <div class="panel-title">流程规范</div>
+          <div id="sopCard" class="sop-card muted-line">加载中</div>
+        </section>
+
+        <section class="panel status-card observe-panel">
+          <div class="panel-title">观察</div>
+          <div class="status-tabs" role="tablist" aria-label="观察面板">
+            <button class="status-tab active" type="button" data-status-tab="cost">成本</button>
+            <button class="status-tab" type="button" data-status-tab="invocation">任务</button>
+            <button class="status-tab" type="button" data-status-tab="harness">门禁</button>
+            <button class="status-tab" type="button" data-status-tab="trajectory">轨迹</button>
+            <button class="status-tab" type="button" data-status-tab="review">复盘</button>
+            <button class="status-tab" type="button" data-status-tab="recall">复用</button>
+            <button class="status-tab" type="button" data-status-tab="skills">技能</button>
+            <button class="status-tab" type="button" data-status-tab="lessons">经验</button>
+            <button class="status-tab" type="button" data-status-tab="wiki">共识</button>
+          </div>
+          <div class="status-tab-body">
+            <div class="status-pane active" data-status-pane="cost">
+              <div id="costCard" class="cost-card muted-line">加载中</div>
+            </div>
+            <div class="status-pane" data-status-pane="invocation">
+              <div id="invocationCard" class="observability-card muted-line">尚未运行</div>
+            </div>
+            <div class="status-pane" data-status-pane="harness">
+              <div id="harnessCard" class="observability-card muted-line">加载中</div>
+            </div>
+            <div class="status-pane" data-status-pane="trajectory">
+              <div id="trajectoryCard" class="observability-card muted-line">等待任务</div>
+            </div>
+            <div class="status-pane" data-status-pane="review">
+              <div id="reviewPacketCard" class="observability-card muted-line">等待任务</div>
+            </div>
+            <div class="status-pane" data-status-pane="recall">
+              <div id="recallCard" class="observability-card muted-line">加载中</div>
+            </div>
+            <div class="status-pane" data-status-pane="skills">
+              <div id="skillsCard" class="observability-card muted-line">加载中</div>
+            </div>
+            <div class="status-pane" data-status-pane="lessons">
+              <div id="lessonsCard" class="observability-card muted-line">加载中</div>
+            </div>
+            <div class="status-pane" data-status-pane="wiki">
+              <div id="wikiCard" class="observability-card muted-line">加载中</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/static/app.js?v=20260622-kebab-paths-1"></script>
+  </body>
+</html>

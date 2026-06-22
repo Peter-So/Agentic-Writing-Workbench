@@ -1,0 +1,8 @@
+interface:
+  display_name: "小说索引器"
+  short_description: "扫描本地小说并建立章节索引"
+  default_prompt: "Use $novel-corpus-indexer to scan the local novel corpus and build a chapter-level manifest with stable evidence offsets."
+
+policy:
+  allow_implicit_invocation: true
+

@@ -1,0 +1,54 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local secrets and machine-specific config.
+.env
+.env.local
+.env.shared
+projects/*/.env
+projects/*/.env.local
+
+# Runtime state.
+logs/
+tmp/
+data/browser-profiles/*
+!data/browser-profiles/.gitkeep
+data/chat-history/*
+!data/chat-history/.gitkeep
+
+# Writing runtime artifacts.
+projects/writing/logs/*
+!projects/writing/logs/.gitkeep
+projects/writing/memory/*
+!projects/writing/memory/.gitkeep
+projects/writing/outputs/*
+!projects/writing/outputs/.gitkeep
+projects/writing/data/.cache/
+
+# Reference corpora and derived indexes.
+projects/writing/references/novels/*
+!projects/writing/references/novels/.gitkeep
+projects/writing/novel-acquisition/novels/*
+!projects/writing/novel-acquisition/novels/.gitkeep
+projects/writing/novel-acquisition/cache/*
+!projects/writing/novel-acquisition/cache/.gitkeep
+projects/writing/novel-acquisition/outputs-corpus/*
+!projects/writing/novel-acquisition/outputs-corpus/.gitkeep
+projects/writing/novel-acquisition/anchors/
+projects/writing/novel-acquisition/extracted/
+
+# Per-project generated files.
+projects/writing/novels/*/日志/*
+projects/writing/novels/*/输出/*
+projects/writing/novels/*/reviews/*
+projects/writing/novels/*/分镜生成/_api_debug/*
+projects/writing/novels/*/分镜生成/**/_superseded/
+projects/writing/novels/*/分镜生成/image_generation_queue.json
+projects/writing/novels/*/material_bundle*.json
+projects/writing/novels/*/*_prompt.txt
+projects/writing/novels/*/delegate_context*.txt
+
+# Keep empty scaffold markers.
+!**/.gitkeep

@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "project_id": "002",
+  "project_kind": "short_film",
+  "updated_at": "2026-06-22T15:43:35",
+  "documents": {
+    "brief": {
+      "role": "brief",
+      "label": "创作简报",
+      "path": "简报/创作简报.md",
+      "canonical_path": "简报/创作简报.md",
+      "aliases": [
+        "brief/创作简报.md",
+        "brief.md",
+        "项目简报.md"
+      ],
+      "description": "片长、核心命题、目标观众、制作限制与整体创作边界。"
+    },
+    "concept": {
+      "role": "concept",
+      "label": "概念",
+      "path": "开发/概念.md",
+      "canonical_path": "开发/概念.md",
+      "aliases": [
+        "development/概念.md",
+        "logline.md",
+        "概念.md"
+      ],
+      "description": "短片概念、logline、主题、主角欲望、选择代价和结尾余味。"
+    },
+    "character": {
+      "role": "character",
+      "label": "角色表",
+      "path": "人物/角色表.md",
+      "canonical_path": "人物/角色表.md",
+      "aliases": [
+        "characters/角色表.md",
+        "characters.md",
+        "角色表.md",
+        "人物档案.md"
+      ],
+      "description": "角色欲望、阻碍、关系、转变和可拍摄行为。"
+    },
+    "beat_sheet": {
+      "role": "beat_sheet",
+      "label": "节拍表",
+      "path": "开发/节拍表.md",
+      "canonical_path": "开发/节拍表.md",
+      "aliases": [
+        "development/节拍表.md",
+        "beat_sheet.md",
+        "节拍表.md"
+      ],
+      "description": "短片节拍、冲突、转折和画面推进。"
+    },
+    "screenplay": {
+      "role": "screenplay",
+      "label": "剧本",
+      "path": "剧本/剧本.md",
+      "canonical_path": "剧本/剧本.md",
+      "aliases": [
+        "script/剧本.md",
+        "screenplay.md",
+        "script.md",
+        "剧本.md"
+      ],
+      "description": "影视剧本正文，包含场景标题、动作、角色和对白。"
+    },
+    "shot_list": {
+      "role": "shot_list",
+      "label": "分镜表",
+      "path": "分镜/分镜表.md",
+      "canonical_path": "分镜/分镜表.md",
+      "aliases": [
+        "storyboard/分镜表.md",
+        "shot_list.md",
+        "分镜表.md"
+      ],
+      "description": "镜号、景别、画面、声音、备注和拍摄提示。"
+    },
+    "style": {
+      "role": "style",
+      "label": "影像风格",
+      "path": "风格/影像风格.md",
+      "canonical_path": "风格/影像风格.md",
+      "aliases": [
+        "style/影像风格.md",
+        "style.md",
+        "影像风格.md"
+      ],
+      "description": "视觉基调、声音策略、剪辑节奏和画面风格。"
+    }
+  },
+  "directories": {
+    "brief": {
+      "role": "brief",
+      "path": "简报",
+      "description": "项目简报与制作限制。"
+    },
+    "development": {
+      "role": "development",
+      "path": "开发",
+      "description": "概念、节拍和开发材料。"
+    },
+    "characters": {
+      "role": "characters",
+      "path": "人物",
+      "description": "角色设定和角色视觉资产。"
+    },
+    "script": {
+      "role": "script",
+      "path": "剧本",
+      "description": "剧本正文和版本。"
+    },
+    "storyboard": {
+      "role": "storyboard",
+      "path": "分镜",
+      "description": "分镜表和镜头设计。"
+    },
+    "storyboards": {
+      "role": "storyboards",
+      "path": "分镜生成",
+      "description": "分镜提示词、生图和镜头资产。"
+    },
+    "style": {
+      "role": "style",
+      "path": "风格",
+      "description": "影像风格、声音和剪辑策略。"
+    },
+    "assets": {
+      "role": "assets",
+      "path": "资产",
+      "description": "角色图、参考图和生成图素材。"
+    },
+    "outputs": {
+      "role": "outputs",
+      "path": "输出",
+      "description": "确认稿、快照和生成物。"
+    },
+    "skills": {
+      "role": "skills",
+      "path": "技能",
+      "description": "项目私有技能。"
+    },
+    "wiki": {
+      "role": "wiki",
+      "path": "维基",
+      "description": "项目级 Wiki。"
+    }
+  },
+  "routing_notes": [
+    "系统写入结构性材料时，应先按 role 查询本文件，再按 aliases/文件名相似度回退。",
+    "历史项目迁移后，旧文件名会保留在 aliases 中，由本 Wiki 路由到新规范路径。",
+    "覆盖式修改属于高风险写入，必须经用户显式确认后执行。"
+  ]
+}

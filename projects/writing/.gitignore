@@ -1,0 +1,29 @@
+# Large corpora and generated bundles stay outside source control.
+ReferenceNovels/
+novel-acquisition/novels/
+novel-acquisition/cache/
+outputs/
+writer-assets/
+
+# Runtime and review artifacts.
+logs/
+memory/
+data/.cache/
+novels/*/reviews/
+novels/*/分镜生成/_api_debug/
+novels/*/分镜生成/image_generation_queue.json
+novels/*/分镜生成/**/_superseded/
+novels/*/storyboards/_api_debug/
+novels/*/storyboards/image_generation_queue.json
+novels/*/storyboards/**/_superseded/
+novels/*/material_bundle*.json
+novels/*/*_prompt.txt
+novels/*/delegate_context*.txt
+novels/*/chapters/_backup_*.md
+*.log
+*.pyc
+__pycache__/
+
+# Local secrets.
+.env
+.env.local

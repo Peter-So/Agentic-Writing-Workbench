@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "novel_knowledge.schema.json",
+  "title": "Novel Corpus Knowledge Bundle",
+  "type": "object",
+  "required": ["manifest", "chapters", "characters", "arcs", "scenes", "systems", "style_notes"],
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "required": ["corpus_id", "generated_at", "books"],
+      "properties": {
+        "corpus_id": { "type": "string" },
+        "generated_at": { "type": "string" },
+        "source_root": { "type": "string" },
+        "books": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/book_record" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "chapters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/chapter_record" }
+    },
+    "characters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/character_record" }
+    },
+    "arcs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/arc_record" }
+    },
+    "scenes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scene_record" }
+    },
+    "systems": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/system_record" }
+    },
+    "style_notes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/style_note" }
+    }
+  },
+  "$defs": {
+    "evidence_ref": {
+      "type": "object",
+      "required": ["novel_id", "file_path", "chapter_id", "start_char", "end_char"],
+      "properties": {
+        "novel_id": { "type": "string" },
+        "file_path": { "type": "string" },
+        "chapter_id": { "type": "string" },
+        "start_char": { "type": "integer", "minimum": 0 },
+        "end_char": { "type": "integer", "minimum": 0 },
+        "excerpt": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "book_record": {
+      "type": "object",
+      "required": ["novel_id", "file_path", "title", "size_bytes"],
+      "properties": {
+        "novel_id": { "type": "string" },
+        "file_path": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "chapter_count": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "chapter_record": {
+      "type": "object",
+      "required": ["chapter_id", "novel_id", "chapter_index", "title", "start_char", "end_char"],
+      "properties": {
+        "chapter_id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "chapter_index": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "file_path": { "type": "string" },
+        "text_path": { "type": "string" },
+        "start_char": { "type": "integer", "minimum": 0 },
+        "end_char": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string" },
+        "events": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_ref" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "character_record": {
+      "type": "object",
+      "required": ["id", "novel_id", "title", "summary", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "role": { "type": "string" },
+        "goals": { "type": "array", "items": { "type": "string" } },
+        "relationships": { "type": "array", "items": { "type": "string" } },
+        "change_notes": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "arc_record": {
+      "type": "object",
+      "required": ["id", "novel_id", "title", "summary", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "start_state": { "type": "string" },
+        "trigger": { "type": "string" },
+        "turning_point": { "type": "string" },
+        "end_state": { "type": "string" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    },
+    "scene_record": {
+      "type": "object",
+      "required": ["id", "novel_id", "title", "summary", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "chapter_id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "setting": { "type": "string" },
+        "function": { "type": "string" },
+        "mood": { "type": "string" },
+        "sensory_notes": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    },
+    "system_record": {
+      "type": "object",
+      "required": ["id", "novel_id", "title", "summary", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "rules": { "type": "array", "items": { "type": "string" } },
+        "limits": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    },
+    "style_note": {
+      "type": "object",
+      "required": ["id", "novel_id", "title", "summary", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "novel_id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "techniques": { "type": "array", "items": { "type": "string" } },
+        "applicability": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+

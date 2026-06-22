@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "project_id": "001",
+  "project_kind": "novel_strong",
+  "updated_at": "2026-06-22T15:43:35",
+  "documents": {
+    "base_setting": {
+      "role": "base_setting",
+      "label": "基础设定",
+      "path": "设定/基础设定.md",
+      "canonical_path": "设定/基础设定.md",
+      "aliases": [
+        "settings/基础设定.md",
+        "基础设定.md",
+        "brief.md",
+        "logline.md",
+        "项目简报.md",
+        "设定.md"
+      ],
+      "description": "题材、类型基调、核心命题、创作约束等全局基础信息。"
+    },
+    "character": {
+      "role": "character",
+      "label": "人物设定",
+      "path": "人物/人物档案.md",
+      "canonical_path": "人物/人物档案.md",
+      "aliases": [
+        "characters/人物档案.md",
+        "人物档案.md",
+        "characters.md",
+        "角色表.md",
+        "人物设定.md"
+      ],
+      "description": "主角、配角、欲望、阻碍、关系、弧光、声音等人物材料。"
+    },
+    "worldview": {
+      "role": "worldview",
+      "label": "世界观设定",
+      "path": "设定/世界观设定.md",
+      "canonical_path": "设定/世界观设定.md",
+      "aliases": [
+        "settings/世界观设定.md",
+        "世界观设定.md",
+        "world.md",
+        "001设定及问题.md",
+        "穿越设定.md"
+      ],
+      "description": "世界规则、时间线、空间规则、制度、禁忌与边界。"
+    },
+    "plot": {
+      "role": "plot",
+      "label": "情节设定",
+      "path": "规划/情节设定.md",
+      "canonical_path": "规划/情节设定.md",
+      "aliases": [
+        "planning/情节设定.md",
+        "情节设定.md",
+        "beat_sheet.md",
+        "剧情设定.md",
+        "伏笔表.md"
+      ],
+      "description": "主线推进、关键冲突、节拍、伏笔与回收计划。"
+    },
+    "outline": {
+      "role": "outline",
+      "label": "大纲",
+      "path": "规划/大纲.md",
+      "canonical_path": "规划/大纲.md",
+      "aliases": [
+        "planning/大纲.md",
+        "大纲.md",
+        "outline.md",
+        "高中卷大纲.md",
+        "全书大纲.md",
+        "章节大纲.md"
+      ],
+      "description": "全书结构、分卷结构、章节大纲与章节钩子。新项目使用通用名 大纲.md；旧项目可通过 Wiki 映射到已有文件。"
+    },
+    "chapter_summary": {
+      "role": "chapter_summary",
+      "label": "已完成章节摘要",
+      "path": "记忆/已完成章节摘要.md",
+      "canonical_path": "记忆/已完成章节摘要.md",
+      "aliases": [
+        "memory/已完成章节摘要.md",
+        "已完成章节摘要.md"
+      ],
+      "description": "确认/归档后的章节摘要与跨章节连续性记忆。"
+    },
+    "chapter_status": {
+      "role": "chapter_status",
+      "label": "章节完成状态",
+      "path": "记忆/章节完成状态.json",
+      "canonical_path": "记忆/章节完成状态.json",
+      "aliases": [
+        "memory/章节完成状态.json",
+        "章节完成状态.json"
+      ],
+      "description": "章节正文确认、留档和完成进度状态。"
+    },
+    "narrative_rules": {
+      "role": "narrative_rules",
+      "label": "叙事规则",
+      "path": "规划/叙事规则.md",
+      "canonical_path": "规划/叙事规则.md",
+      "aliases": [
+        "planning/叙事规则.md",
+        "双线叙事规则.md",
+        "叙事规则.md"
+      ],
+      "description": "项目特有的叙事结构、双线规则和章节组织原则。"
+    },
+    "style_guide": {
+      "role": "style_guide",
+      "label": "风格规范",
+      "path": "风格/风格规范.md",
+      "canonical_path": "风格/风格规范.md",
+      "aliases": [
+        "style/风格规范.md",
+        "校园风格写作技巧.md",
+        "风格规范.md",
+        "写作技巧.md"
+      ],
+      "description": "语言风格、场景质感、校园生活细节和写作技巧规范。"
+    }
+  },
+  "directories": {
+    "settings": {
+      "role": "settings",
+      "path": "设定",
+      "description": "基础设定、世界观、规则等设定层文件。"
+    },
+    "planning": {
+      "role": "planning",
+      "path": "规划",
+      "description": "大纲、情节、节拍、伏笔等规划层文件。"
+    },
+    "characters": {
+      "role": "characters",
+      "path": "人物",
+      "description": "人物档案、人物关系和角色声音材料。"
+    },
+    "memory": {
+      "role": "memory",
+      "path": "记忆",
+      "description": "章节摘要、完成状态和连续性记忆。"
+    },
+    "style": {
+      "role": "style",
+      "path": "风格",
+      "description": "文风、类型、语言和审美规范。"
+    },
+    "chapters": {
+      "role": "chapters",
+      "path": "正文",
+      "description": "确认归档后的章节正文。"
+    },
+    "outputs": {
+      "role": "outputs",
+      "path": "输出",
+      "description": "材料包、快照、备份和生成产物。"
+    },
+    "accepted_planning": {
+      "role": "accepted_planning",
+      "path": "输出/已采纳规划",
+      "description": "用户确认后的规划类产物快照。"
+    },
+    "outline_backups": {
+      "role": "outline_backups",
+      "path": "输出/大纲备份",
+      "description": "大纲覆盖写回前的自动备份。"
+    },
+    "invocation_logs": {
+      "role": "invocation_logs",
+      "path": "日志/调用记录",
+      "description": "创作任务 invocation、节点轨迹、成本和 provider 日志。"
+    },
+    "skills": {
+      "role": "skills",
+      "path": "技能",
+      "description": "项目私有技能。公共技能由类型级技能库提供。"
+    },
+    "wiki": {
+      "role": "wiki",
+      "path": "维基",
+      "description": "项目级 Wiki，保存结构索引、稳定规则与项目共识。"
+    },
+    "references": {
+      "role": "references",
+      "path": "资产/参考材料",
+      "description": "项目专用参考材料。"
+    }
+  },
+  "routing_notes": [
+    "系统写入结构性材料时，应先按 role 查询本文件，再按 aliases/文件名相似度回退。",
+    "历史项目迁移后，旧文件名会保留在 aliases 中，由本 Wiki 路由到新规范路径。",
+    "覆盖式修改属于高风险写入，必须经用户显式确认后执行。"
+  ]
+}

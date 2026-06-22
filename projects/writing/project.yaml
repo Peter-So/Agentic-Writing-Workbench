@@ -1,0 +1,9 @@
+project_id: writing
+name: Writing
+description: Writing project workspace.
+chroma_docs_collection: writing_docs
+chroma_memory_collection: writing_memory
+default_agent: writing_assistant
+supported_modalities:
+  - text
+  - file
