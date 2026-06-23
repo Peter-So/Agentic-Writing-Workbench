@@ -177,3 +177,10 @@ Code and documentation text are released under the [MIT License](LICENSE).
 The project name, README diagrams, screenshots, and visual presentation are brand assets. See [TRADEMARKS.md](TRADEMARKS.md).
 
 This repository is prepared as a clean framework export. It keeps reusable code, templates, public skill files, public writing technique knowledge, images, and empty project scaffolds.
+
+## Friendly Links
+
+<a href="https://linux.do/">
+  <img src="https://linux.do/logo-25.svg" alt="linux.do" width="25" height="25" align="absmiddle">
+  linux.do
+</a>
