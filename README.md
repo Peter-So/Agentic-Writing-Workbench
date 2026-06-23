@@ -181,6 +181,6 @@ This repository is prepared as a clean framework export. It keeps reusable code,
 ## Friendly Links
 
 <a href="https://linux.do/">
-  <img src="https://linux.do/logo-25.svg" alt="linux.do" width="25" height="25" align="absmiddle">
+  <img src="docs/images/linux-do-logo.svg" alt="linux.do" width="25" height="25" align="absmiddle">
   linux.do
 </a>
