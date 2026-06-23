@@ -177,3 +177,10 @@ node --check app\static-writing\app.js
 项目名称、README 图示、截图和视觉呈现属于品牌资产，详见 [TRADEMARKS.md](TRADEMARKS.md)。
 
 该仓库是一个干净框架导出版，仅保留可复用代码、模板、公共技能文件、公共写作技法知识库、项目图片和空项目骨架。
+
+## 友情链接
+
+<a href="https://linux.do/">
+  <img src="docs/images/linux-do-logo.svg" alt="linux.do" width="25" height="25" align="absmiddle">
+  linux.do
+</a>
