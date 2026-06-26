@@ -642,6 +642,15 @@ def workflow_stages_endpoint() -> dict[str, Any]:
     return {"ok": True, "presets": STAGE_PRESETS, "labels": STAGE_LABELS}
 
 
+@app.get("/api/writing/graph-view")
+def writing_graph_view(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
+    from app.project_kinds import project_kind
+    from app.writing_graph import graph_visualization
+
+    nid = normalize_novel_id(novel_id)
+    return graph_visualization(project_kind(nid))
+
+
 @app.get("/api/writing/models")
 def writing_models() -> dict[str, Any]:
     runtime = load_runtime_config()

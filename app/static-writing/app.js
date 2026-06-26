@@ -3,6 +3,7 @@ const projectProgress = document.querySelector("#projectProgress");
 const projectInventory = document.querySelector("#projectInventory");
 const createProjectBtn = document.querySelector("#createProjectBtn");
 const deleteProjectBtn = document.querySelector("#deleteProjectBtn");
+const projectFlowBtn = document.querySelector("#projectFlowBtn");
 const projectCreateForm = document.querySelector("#projectCreateForm");
 const projectIdInput = document.querySelector("#projectIdInput");
 const projectTypeSelect = document.querySelector("#projectTypeSelect");
@@ -29,6 +30,17 @@ const wikiViewerList = document.querySelector("#wikiViewerList");
 const wikiViewerContent = document.querySelector("#wikiViewerContent");
 const wikiViewerStatus = document.querySelector("#wikiViewerStatus");
 const closeWikiBtn = document.querySelector("#closeWikiBtn");
+const graphViewer = document.querySelector("#graphViewer");
+const graphViewerTitle = document.querySelector("#graphViewerTitle");
+const graphViewerSubtitle = document.querySelector("#graphViewerSubtitle");
+const graphGroupList = document.querySelector("#graphGroupList");
+const graphMap = document.querySelector(".graph-map");
+const graphNotes = document.querySelector("#graphNotes");
+const graphEdges = document.querySelector("#graphEdges");
+const graphViewerStatus = document.querySelector("#graphViewerStatus");
+const closeGraphBtn = document.querySelector("#closeGraphBtn");
+const graphZoomInBtn = document.querySelector("#graphZoomInBtn");
+const graphZoomOutBtn = document.querySelector("#graphZoomOutBtn");
 const composer = document.querySelector("#composer");
 const shortFilmActions = document.querySelector("#shortFilmActions");
 const storyboardBeatInput = document.querySelector("#storyboardBeatInput");
@@ -68,6 +80,7 @@ let activeStatusTab = "cost";
 const statusTabSignatures = {};
 let activeFile = null;
 let fileTreeData = null;
+let activeMainView = "conversation";
 let pendingModelRetry = null;
 let activeWorkflowStatus = null;
 let pendingWorkflowPersistTimer = null;
@@ -838,13 +851,14 @@ function setBusy(busy, label = "运行中") {
   doctorBtn.disabled = busy;
   if (createProjectBtn) createProjectBtn.disabled = busy;
   if (deleteProjectBtn) deleteProjectBtn.disabled = busy || !currentProject;
+  if (projectFlowBtn) projectFlowBtn.disabled = busy || !currentProject;
   if (submitProjectCreateBtn) submitProjectCreateBtn.disabled = busy;
   if (saveFileBtn) saveFileBtn.disabled = busy || !canEditActiveFile();
   if (rewriteFileBtn) rewriteFileBtn.disabled = busy || !canEditActiveFile();
   if (visualPromptBtn) visualPromptBtn.disabled = busy;
   if (storyboardImagesBtn) storyboardImagesBtn.disabled = busy;
   if (storyboardBeatInput) storyboardBeatInput.disabled = busy;
-  workspaceTitle.textContent = busy ? label : "创作驾驶舱";
+  workspaceTitle.textContent = busy ? label : workspaceTitleForView();
 }
 
 async function persistMessage(payload) {
@@ -1015,26 +1029,418 @@ async function reloadProjectWorkspace(options = {}) {
   await loadChatHistory();
 }
 
+function workspaceTitleForView() {
+  return {
+    conversation: "创作驾驶舱",
+    file: "文件编辑",
+    wiki: "项目维基",
+    graph: "流程可视化",
+  }[activeMainView] || "创作驾驶舱";
+}
+
 function showConversation() {
+  activeMainView = "conversation";
   fileEditor.hidden = true;
   if (wikiViewer) wikiViewer.hidden = true;
+  if (graphViewer) graphViewer.hidden = true;
   messagesEl.hidden = false;
-  workspaceTitle.textContent = "创作驾驶舱";
+  workspaceTitle.textContent = workspaceTitleForView();
 }
 
 function showFileEditor() {
+  activeMainView = "file";
   fileEditor.hidden = false;
   if (wikiViewer) wikiViewer.hidden = true;
+  if (graphViewer) graphViewer.hidden = true;
   messagesEl.hidden = true;
-  workspaceTitle.textContent = "文件编辑";
+  workspaceTitle.textContent = workspaceTitleForView();
 }
 
 function showWikiViewer() {
   if (!wikiViewer) return;
+  activeMainView = "wiki";
   fileEditor.hidden = true;
   wikiViewer.hidden = false;
+  if (graphViewer) graphViewer.hidden = true;
   messagesEl.hidden = true;
-  workspaceTitle.textContent = "项目维基";
+  workspaceTitle.textContent = workspaceTitleForView();
+}
+
+function showGraphViewer() {
+  if (!graphViewer) return;
+  activeMainView = "graph";
+  fileEditor.hidden = true;
+  if (wikiViewer) wikiViewer.hidden = true;
+  graphViewer.hidden = false;
+  messagesEl.hidden = true;
+  workspaceTitle.textContent = workspaceTitleForView();
+}
+
+const GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
+const GRAPH_CANVAS_DEFAULT_SIZE = { width: 1420, height: 1600 };
+const GRAPH_NODE_SIZE = { width: 146, height: 56 };
+const GRAPH_ZOOM = { min: 0.32, max: 1.8, step: 1.16, initial: 0.9, padding: 12 };
+let graphTransform = { x: 0, y: 0, scale: 1 };
+let graphDragState = null;
+let graphCanvasSize = { ...GRAPH_CANVAS_DEFAULT_SIZE };
+const GRAPH_LAYOUT = {
+  __start__: [660, 44],
+  request_analyze: [660, 140],
+  compress_memory: [660, 236],
+  prepare_project: [660, 332],
+  route_intent: [660, 428],
+  build_index: [160, 548],
+  review: [360, 548],
+  assemble: [560, 548],
+  search: [760, 548],
+  draft_entry: [1000, 548],
+  need_audit: [1000, 654],
+  draft_assemble: [1000, 760],
+  prompt_refine: [1000, 866],
+  provider_route: [1000, 972],
+  provider_fanout: [760, 1088],
+  provider_confirm_gate: [760, 1194],
+  generate: [1200, 1088],
+  pre_review: [1200, 1194],
+  model_review: [1200, 1300],
+  draft_finalize: [1000, 1416],
+  __end__: [660, 1532],
+};
+const GRAPH_GROUP_BANDS = [
+  ["入口理解", 92, 476],
+  ["路由分支", 508, 592],
+  ["创作主线", 620, 1010],
+  ["网页模型", 1050, 1232],
+  ["审查回环", 1050, 1340],
+  ["定稿确认", 1378, 1570],
+];
+
+function graphSvgEl(tag, attrs = {}, text = "") {
+  const el = document.createElementNS(GRAPH_SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value !== undefined && value !== null) el.setAttribute(key, String(value));
+  }
+  if (text) el.textContent = text;
+  return el;
+}
+
+function graphNodePosition(id, index = 0) {
+  if (id && typeof id === "object") {
+    const node = id;
+    const x = Number(node.position?.x);
+    const y = Number(node.position?.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+    id = node.id;
+  }
+  if (GRAPH_LAYOUT[id]) {
+    const [x, y] = GRAPH_LAYOUT[id];
+    return { x, y };
+  }
+  return { x: 160 + (index % 5) * 200, y: 1640 + Math.floor(index / 5) * 110 };
+}
+
+function graphAnchor(pos, side) {
+  const { width, height } = GRAPH_NODE_SIZE;
+  if (side === "top") return { x: pos.x, y: pos.y - height / 2 };
+  if (side === "bottom") return { x: pos.x, y: pos.y + height / 2 };
+  if (side === "left") return { x: pos.x - width / 2, y: pos.y };
+  return { x: pos.x + width / 2, y: pos.y };
+}
+
+function graphPathForEdge(edge, sourcePos, targetPos) {
+  const directDown = Math.abs(sourcePos.x - targetPos.x) < 24 && targetPos.y > sourcePos.y;
+  const upward = targetPos.y < sourcePos.y;
+  const loop = edge.label === "regen" || upward;
+  const terminal = edge.target === "__end__";
+  const source = graphAnchor(sourcePos, loop ? "right" : "bottom");
+  const target = graphAnchor(targetPos, loop ? "right" : "top");
+  if (directDown) {
+    return {
+      d: `M ${source.x} ${source.y} L ${target.x} ${target.y}`,
+      label: { x: source.x + 10, y: (source.y + target.y) / 2 },
+      className: terminal ? "terminal" : "",
+    };
+  }
+  if (loop) {
+    const offset = edge.source === "model_review" ? 168 : 118;
+    const x = Math.max(source.x, target.x) + offset;
+    return {
+      d: `M ${source.x} ${source.y} C ${x} ${source.y}, ${x} ${target.y}, ${target.x} ${target.y}`,
+      label: { x: x - 44, y: (source.y + target.y) / 2 },
+      className: "loop",
+    };
+  }
+  const sourceSide = targetPos.x < sourcePos.x ? "left" : "right";
+  const targetSide = targetPos.x < sourcePos.x ? "right" : "left";
+  const s = graphAnchor(sourcePos, sourceSide);
+  const t = graphAnchor(targetPos, targetSide);
+  const midX = (s.x + t.x) / 2;
+  return {
+    d: `M ${s.x} ${s.y} C ${midX} ${s.y}, ${midX} ${t.y}, ${t.x} ${t.y}`,
+    label: { x: midX, y: (s.y + t.y) / 2 - 6 },
+    className: terminal ? "terminal" : "",
+  };
+}
+
+function graphNodeTitle(label) {
+  const text = String(label || "");
+  return text.length > 9 ? `${text.slice(0, 9)}…` : text;
+}
+
+function clampGraphScale(value) {
+  return Math.max(GRAPH_ZOOM.min, Math.min(GRAPH_ZOOM.max, value));
+}
+
+function clampGraphPan(transform = graphTransform) {
+  if (!graphMap) return transform;
+  const rect = graphMap.getBoundingClientRect();
+  const scaledWidth = graphCanvasSize.width * transform.scale;
+  const scaledHeight = graphCanvasSize.height * transform.scale;
+  const pad = GRAPH_ZOOM.padding;
+  const clampAxis = (value, viewport, content) => {
+    if (content <= viewport - pad * 2) return (viewport - content) / 2;
+    return Math.min(pad, Math.max(viewport - content - pad, value));
+  };
+  return {
+    scale: transform.scale,
+    x: clampAxis(transform.x, rect.width, scaledWidth),
+    y: clampAxis(transform.y, rect.height, scaledHeight),
+  };
+}
+
+function applyGraphTransform() {
+  if (!graphGroupList) return;
+  graphTransform = clampGraphPan(graphTransform);
+  graphGroupList.style.transform = `translate(${graphTransform.x}px, ${graphTransform.y}px) scale(${graphTransform.scale})`;
+}
+
+function fitGraphCanvas() {
+  if (!graphMap || !graphGroupList) return;
+  const rect = graphMap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const scale = clampGraphScale(GRAPH_ZOOM.initial);
+  graphTransform = clampGraphPan({
+    scale,
+    x: (rect.width - graphCanvasSize.width * scale) / 2,
+    y: GRAPH_ZOOM.padding,
+  });
+  applyGraphTransform();
+}
+
+function zoomGraphCanvas(direction) {
+  if (!graphMap) return;
+  const rect = graphMap.getBoundingClientRect();
+  const factor = direction > 0 ? GRAPH_ZOOM.step : 1 / GRAPH_ZOOM.step;
+  const nextScale = clampGraphScale(graphTransform.scale * factor);
+  if (nextScale === graphTransform.scale) return;
+  const centerX = rect.width / 2;
+  const centerY = rect.height / 2;
+  const contentX = (centerX - graphTransform.x) / graphTransform.scale;
+  const contentY = (centerY - graphTransform.y) / graphTransform.scale;
+  graphTransform = {
+    scale: nextScale,
+    x: centerX - contentX * nextScale,
+    y: centerY - contentY * nextScale,
+  };
+  applyGraphTransform();
+}
+
+function beginGraphDrag(event) {
+  if (!graphMap || !graphGroupList || event.button !== 0) return;
+  if (event.target.closest(".graph-controls")) return;
+  event.preventDefault();
+  graphDragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: graphTransform.x,
+    originY: graphTransform.y,
+  };
+  graphMap.classList.add("dragging");
+  graphMap.setPointerCapture?.(event.pointerId);
+}
+
+function moveGraphDrag(event) {
+  if (!graphDragState || graphDragState.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  graphTransform.x = graphDragState.originX + event.clientX - graphDragState.startX;
+  graphTransform.y = graphDragState.originY + event.clientY - graphDragState.startY;
+  applyGraphTransform();
+}
+
+function endGraphDrag(event) {
+  if (!graphDragState || graphDragState.pointerId !== event.pointerId) return;
+  graphMap?.releasePointerCapture?.(event.pointerId);
+  graphMap?.classList.remove("dragging");
+  graphDragState = null;
+}
+
+function renderGraphCanvas(data, nodeById, edges) {
+  graphGroupList.textContent = "";
+  const nodes = Array.from(nodeById.values());
+  const width = Number(data.canvas?.width) || GRAPH_CANVAS_DEFAULT_SIZE.width;
+  const height = Number(data.canvas?.height) || GRAPH_CANVAS_DEFAULT_SIZE.height;
+  graphCanvasSize = { width, height };
+  graphGroupList.style.width = `${width}px`;
+  graphGroupList.style.height = `${height}px`;
+  const positions = new Map(nodes.map((node, index) => [node.id, graphNodePosition(node, index)]));
+  const svg = graphSvgEl("svg", {
+    class: "graph-svg",
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: "img",
+    "aria-label": "LangGraph 节点流程图",
+  });
+  const defs = graphSvgEl("defs");
+  const marker = graphSvgEl("marker", {
+    id: "graphArrow",
+    markerWidth: 10,
+    markerHeight: 10,
+    refX: 9,
+    refY: 3,
+    orient: "auto",
+    markerUnits: "strokeWidth",
+  });
+  marker.appendChild(graphSvgEl("path", { d: "M 0 0 L 9 3 L 0 6 z", fill: "#8a94a6" }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  const groupBands = Array.isArray(data.group_bands) && data.group_bands.length ? data.group_bands : GRAPH_GROUP_BANDS;
+  for (const [label, y1, y2] of groupBands) {
+    svg.appendChild(graphSvgEl("rect", {
+      x: 28,
+      y: y1,
+      width: Math.max(0, width - 56),
+      height: y2 - y1,
+      rx: 10,
+      fill: "transparent",
+      stroke: "#d9dee7",
+      "stroke-dasharray": "5 6",
+    }));
+    svg.appendChild(graphSvgEl("text", {
+      x: 44,
+      y: y1 + 22,
+      class: "graph-node-group-label",
+    }, label));
+  }
+
+  const edgeLayer = graphSvgEl("g");
+  for (const edge of edges) {
+    const sourcePos = positions.get(edge.source);
+    const targetPos = positions.get(edge.target);
+    if (!sourcePos || !targetPos) continue;
+    const pathData = graphPathForEdge(edge, sourcePos, targetPos);
+    edgeLayer.appendChild(graphSvgEl("path", {
+      d: pathData.d,
+      class: `graph-link ${edge.conditional ? "conditional" : ""} ${pathData.className || ""}`.trim(),
+      "marker-end": "url(#graphArrow)",
+    }));
+    if (edge.label) {
+      const label = String(edge.label);
+      const labelWidth = Math.max(42, label.length * 9 + 18);
+      edgeLayer.appendChild(graphSvgEl("rect", {
+        x: pathData.label.x - labelWidth / 2,
+        y: pathData.label.y - 14,
+        width: labelWidth,
+        height: 20,
+        rx: 10,
+        class: "graph-edge-label-bg",
+      }));
+      edgeLayer.appendChild(graphSvgEl("text", {
+        x: pathData.label.x,
+        y: pathData.label.y,
+        "text-anchor": "middle",
+        class: "graph-edge-label",
+      }, label));
+    }
+  }
+  svg.appendChild(edgeLayer);
+
+  const nodeLayer = graphSvgEl("g");
+  for (const node of nodes) {
+    const pos = positions.get(node.id);
+    if (!pos) continue;
+    const group = graphSvgEl("g", {
+      class: `graph-node ${node.system ? "system" : ""} ${node.lightweight ? "lightweight" : ""}`.trim(),
+    });
+    group.appendChild(graphSvgEl("title", {}, `${node.label || node.id}\n${node.id}\n${node.description || ""}`));
+    group.appendChild(graphSvgEl("rect", {
+      x: pos.x - GRAPH_NODE_SIZE.width / 2,
+      y: pos.y - GRAPH_NODE_SIZE.height / 2,
+      width: GRAPH_NODE_SIZE.width,
+      height: GRAPH_NODE_SIZE.height,
+      rx: 8,
+      class: "graph-node-rect",
+    }));
+    group.appendChild(graphSvgEl("text", {
+      x: pos.x,
+      y: pos.y - 5,
+      "text-anchor": "middle",
+      class: "graph-node-title",
+    }, graphNodeTitle(node.label || node.id)));
+    group.appendChild(graphSvgEl("text", {
+      x: pos.x,
+      y: pos.y + 16,
+      "text-anchor": "middle",
+      class: "graph-node-id",
+    }, node.id));
+    nodeLayer.appendChild(group);
+  }
+  svg.appendChild(nodeLayer);
+  graphGroupList.appendChild(svg);
+  window.requestAnimationFrame(fitGraphCanvas);
+}
+
+function renderGraphView(data = {}) {
+  const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+  const edges = Array.isArray(data.edges) ? data.edges : [];
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  graphViewerTitle.textContent = `${projectKindLabel(data.project_kind)}｜LangGraph 节点流程`;
+  graphViewerSubtitle.textContent = `项目 ${currentProject || "默认"} · Mermaid 风格画布 · ${nodes.length} 个节点 / ${edges.length} 条边`;
+  graphViewerStatus.textContent = "按住鼠标左键拖动可上下左右移动；右上角按钮可放大、缩小。实线为直接流转，虚线为条件分支，黄色侧边曲线为审查回环。";
+  renderGraphCanvas(data, nodeById, edges);
+
+  const notes = Array.isArray(data.notes) ? data.notes : [];
+  graphNotes.innerHTML = `
+    <h4>项目类型说明</h4>
+    ${notes.length ? `<ul>${notes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<div class=\"muted-line\">暂无说明。</div>"}
+  `;
+  graphEdges.innerHTML = `
+    <h4>关键边</h4>
+    ${edges.map((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      const condition = edge.label ? `条件：${edge.label}` : (edge.conditional ? "条件边" : "直接边");
+      return `
+        <div class="graph-edge-row">
+          <strong>${escapeHtml(source?.label || edge.source)} → ${escapeHtml(target?.label || edge.target)}</strong>
+          <span>${escapeHtml(condition)}</span>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+
+async function openProjectFlow() {
+  if (!currentProject) {
+    setProjectActionStatus("当前没有可查看流程的项目。", "error");
+    return;
+  }
+  setBusy(true, "加载流程");
+  try {
+    const res = await fetch(`/api/writing/graph-view?novel_id=${encodeURIComponent(currentProject)}`);
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "流程图加载失败");
+    renderGraphView(data);
+    showGraphViewer();
+    setProjectActionStatus(`已打开 ${projectKindLabel(data.project_kind)} 流程图。`, "ok");
+  } catch (error) {
+    setProjectActionStatus(`流程图加载失败：${error}`, "error");
+    addMessage("system", `流程图加载失败：${error}`, "流程");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function canEditActiveFile() {
@@ -2587,6 +2993,7 @@ async function loadStatus() {
     projectSelect.appendChild(opt);
   }
   if (deleteProjectBtn) deleteProjectBtn.disabled = !currentProject;
+  if (projectFlowBtn) projectFlowBtn.disabled = !currentProject;
   renderTasks();
   renderSop();
   renderCollaborationIdle();
@@ -4380,6 +4787,28 @@ if (chatBtn) {
 closeFileBtn.addEventListener("click", showConversation);
 if (closeWikiBtn) {
   closeWikiBtn.addEventListener("click", showConversation);
+}
+if (closeGraphBtn) {
+  closeGraphBtn.addEventListener("click", showConversation);
+}
+if (projectFlowBtn) {
+  projectFlowBtn.addEventListener("click", openProjectFlow);
+}
+if (graphZoomInBtn) {
+  graphZoomInBtn.addEventListener("click", () => zoomGraphCanvas(1));
+}
+if (graphZoomOutBtn) {
+  graphZoomOutBtn.addEventListener("click", () => zoomGraphCanvas(-1));
+}
+if (graphMap) {
+  graphMap.addEventListener("pointerdown", beginGraphDrag);
+  graphMap.addEventListener("pointermove", moveGraphDrag);
+  graphMap.addEventListener("pointerup", endGraphDrag);
+  graphMap.addEventListener("pointercancel", endGraphDrag);
+  graphMap.addEventListener("lostpointercapture", () => {
+    graphMap.classList.remove("dragging");
+    graphDragState = null;
+  });
 }
 saveFileBtn.addEventListener("click", () => saveActiveFile({ runUpdateFlow: false }));
 if (rewriteFileBtn) {

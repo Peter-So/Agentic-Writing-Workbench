@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Writing 协作界面</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260622-kebab-paths-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260626-kind-graph-2" />
   </head>
   <body>
     <main class="shell">
@@ -23,6 +23,7 @@
             <div class="project-actions">
               <button id="createProjectBtn" class="project-action-btn primary" type="button">新建</button>
               <button id="deleteProjectBtn" class="project-action-btn danger" type="button">删除</button>
+              <button id="projectFlowBtn" class="project-action-btn success" type="button">流程</button>
             </div>
           </div>
           <div id="projectCreateForm" class="project-create-form" hidden>
@@ -102,6 +103,32 @@
             <article id="wikiViewerContent" class="wiki-content"></article>
           </div>
           <div id="wikiViewerStatus" class="muted-line"></div>
+        </section>
+        <section id="graphViewer" class="graph-viewer" hidden>
+          <header class="graph-viewer-head">
+            <div>
+              <div class="eyebrow">LangGraph 流程</div>
+              <h3 id="graphViewerTitle">项目节点流程</h3>
+              <p id="graphViewerSubtitle" class="muted-line"></p>
+            </div>
+            <div class="file-editor-actions">
+              <button id="closeGraphBtn" class="button ghost" type="button">返回对话</button>
+            </div>
+          </header>
+          <div class="graph-layout">
+            <section class="graph-map">
+              <div class="graph-controls" aria-label="流程图缩放">
+                <button id="graphZoomInBtn" class="graph-zoom-btn zoom-in" type="button" title="放大" aria-label="放大流程图">+</button>
+                <button id="graphZoomOutBtn" class="graph-zoom-btn zoom-out" type="button" title="缩小" aria-label="缩小流程图">-</button>
+              </div>
+              <div id="graphGroupList" class="graph-canvas"></div>
+            </section>
+            <aside class="graph-side">
+              <div id="graphNotes" class="graph-notes"></div>
+              <div id="graphEdges" class="graph-edges"></div>
+            </aside>
+          </div>
+          <div id="graphViewerStatus" class="muted-line"></div>
         </section>
         <section id="messages" class="messages" aria-live="polite"></section>
 
@@ -184,6 +211,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260622-kebab-paths-1"></script>
+    <script src="/static/app.js?v=20260626-kind-graph-2"></script>
   </body>
 </html>

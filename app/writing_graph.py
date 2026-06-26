@@ -34,6 +34,212 @@ COMPRESS_TOKEN_THRESHOLD = 4000
 KEEP_RECENT_MESSAGES = 6
 
 
+GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
+    "__start__": "LangGraph 入口。",
+    "request_analyze": "使用 LLM 理解用户提问、项目类型、章节、目标文件与流程入口。",
+    "compress_memory": "当上下文过长时压缩旧消息，保留可恢复的短期任务记忆。",
+    "prepare_project": "检查项目类型与结构，必要时初始化项目规范目录。",
+    "route_intent": "根据意图分析结果进入搜索、材料组装、审查、索引或创作分支。",
+    "build_index": "重建参考资料与语义检索索引。",
+    "review": "执行章节或材料审查。",
+    "assemble": "只组装材料，不生成正文。",
+    "search": "检索参考资料、五维库或项目相关材料。",
+    "draft_entry": "进入创作或改写分支。",
+    "need_audit": "审计需求复杂度、材料依赖和流程风险。",
+    "context_followup": "网页模型固定会话续问时复用上下文。",
+    "draft_assemble": "按项目 Wiki、章节、人物、前情、技法与限制精确组装材料。",
+    "prompt_refine": "把材料与目标整理成可执行的专业任务单。",
+    "provider_route": "判断是否进入网页模型 provider 分支。",
+    "provider_fanout": "调用已勾选网页 provider，收集外部候选内容。",
+    "provider_confirm_gate": "等待用户确认或补充 provider 材料后再继续融合。",
+    "generate": "调用创作模型生成或根据审查反馈重新生成。",
+    "pre_review": "规则预审，发现硬性问题时进入回环修复。",
+    "model_review": "审查模型评分与反馈，必要时触发重新生成。",
+    "draft_finalize": "清洗定稿内容，准备用户确认与后续归档。",
+    "idea_settle": "随想项目在用户确认后沉淀为灵感、笔记或项目 Wiki 条目。",
+    "visual_prompt": "电影脚本项目基于剧本、节拍与影像风格生成分镜/生图提示词。",
+    "image_plan": "补齐镜头比例、分辨率、角色一致性和画面连续性参数。",
+    "image_generate": "调用生图模型生成关键帧、起承转合帧或角色参考图。",
+    "storyboard_archive": "归档分镜、生图结果与可复用影像经验。",
+    "__end__": "LangGraph 本轮流程结束。",
+}
+
+
+GRAPH_NODE_GROUPS: dict[str, str] = {
+    "__start__": "系统边界",
+    "__end__": "系统边界",
+    "request_analyze": "入口理解",
+    "compress_memory": "入口理解",
+    "prepare_project": "入口理解",
+    "route_intent": "入口理解",
+    "build_index": "路由分支",
+    "review": "路由分支",
+    "assemble": "路由分支",
+    "search": "路由分支",
+    "draft_entry": "创作主线",
+    "need_audit": "创作主线",
+    "context_followup": "创作主线",
+    "draft_assemble": "创作主线",
+    "prompt_refine": "创作主线",
+    "provider_route": "创作主线",
+    "provider_fanout": "网页模型",
+    "provider_confirm_gate": "网页模型",
+    "generate": "审查回环",
+    "pre_review": "审查回环",
+    "model_review": "审查回环",
+    "draft_finalize": "定稿确认",
+    "idea_settle": "定稿确认",
+    "visual_prompt": "影像生图",
+    "image_plan": "影像生图",
+    "image_generate": "影像生图",
+    "storyboard_archive": "影像生图",
+}
+
+
+PROJECT_KIND_GRAPH_NOTES: dict[str, list[str]] = {
+    "novel_strong": [
+        "小说项目默认走完整创作链路：意图分析、材料装配、生成、规则预审、模型审查、定稿确认。",
+        "章节正文、大纲、人物、设定等写回动作在用户确认后由归档流程执行，不在 LangGraph 内静默覆盖文件。",
+    ],
+    "short_film": [
+        "电影脚本项目复用主创作链路，剧本、节拍、分镜提示词和生图由项目类型能力补充。",
+        "规则预审对短片类型通常降级为轻量检查，重点由需求审计、模型审查和用户确认兜底。",
+    ],
+    "generic": [
+        "随想项目复用意图分析、材料整理、生成与确认链路，适合灵感、草稿和参考材料整理。",
+        "规则预审通常轻量化，避免随想类任务被小说专用规则过度约束。",
+    ],
+}
+
+
+GRAPH_CANVAS = {"width": 1420, "height": 1600}
+GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
+    "__start__": (660, 44),
+    "request_analyze": (660, 140),
+    "compress_memory": (660, 236),
+    "prepare_project": (660, 332),
+    "route_intent": (660, 428),
+    "build_index": (160, 548),
+    "review": (360, 548),
+    "assemble": (560, 548),
+    "search": (760, 548),
+    "draft_entry": (1000, 548),
+    "need_audit": (1000, 654),
+    "draft_assemble": (1000, 760),
+    "prompt_refine": (1000, 866),
+    "provider_route": (1000, 972),
+    "provider_fanout": (760, 1088),
+    "provider_confirm_gate": (760, 1194),
+    "generate": (1200, 1088),
+    "pre_review": (1200, 1194),
+    "model_review": (1200, 1300),
+    "draft_finalize": (1000, 1416),
+    "__end__": (660, 1532),
+}
+GRAPH_BASE_BANDS = [
+    ["入口理解", 92, 476],
+    ["路由分支", 508, 592],
+    ["创作主线", 620, 1010],
+    ["网页模型", 1050, 1232],
+    ["审查回环", 1050, 1340],
+    ["定稿确认", 1378, 1570],
+]
+
+COMMON_GRAPH_NODE_IDS = {
+    "__start__", "request_analyze", "compress_memory", "prepare_project", "route_intent", "__end__",
+}
+
+PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
+    "novel_strong": {
+        "visible": None,
+        "extra_nodes": [],
+        "extra_edges": [],
+        "layout": {},
+        "group_bands": GRAPH_BASE_BANDS,
+    },
+    "short_film": {
+        "visible": COMMON_GRAPH_NODE_IDS | {
+            "assemble", "search", "draft_entry", "need_audit", "draft_assemble",
+            "prompt_refine", "provider_route", "provider_fanout", "provider_confirm_gate",
+            "generate", "pre_review", "model_review", "draft_finalize",
+        },
+        "extra_nodes": ["visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
+        "extra_edges": [
+            {"source": "draft_finalize", "target": "visual_prompt", "label": "需分镜/生图", "conditional": True},
+            {"source": "visual_prompt", "target": "image_plan", "label": "", "conditional": False},
+            {"source": "image_plan", "target": "image_generate", "label": "", "conditional": False},
+            {"source": "image_generate", "target": "storyboard_archive", "label": "", "conditional": False},
+            {"source": "storyboard_archive", "target": "__end__", "label": "", "conditional": False},
+        ],
+        "layout": {
+            "visual_prompt": (560, 1320),
+            "image_plan": (560, 1426),
+            "image_generate": (760, 1488),
+            "storyboard_archive": (980, 1532),
+        },
+        "group_bands": [
+            ["入口理解", 92, 476],
+            ["剧本材料", 508, 1010],
+            ["网页模型", 1050, 1232],
+            ["审查回环", 1050, 1340],
+            ["影像生图", 1278, 1570],
+        ],
+    },
+    "generic": {
+        "visible": COMMON_GRAPH_NODE_IDS | {
+            "assemble", "search", "draft_entry", "need_audit", "draft_assemble",
+            "prompt_refine", "provider_route", "generate", "model_review", "draft_finalize",
+        },
+        "extra_nodes": ["idea_settle"],
+        "extra_edges": [
+            {"source": "generate", "target": "model_review", "label": "轻量审查", "conditional": False},
+            {"source": "draft_finalize", "target": "idea_settle", "label": "采纳后沉淀", "conditional": True},
+            {"source": "idea_settle", "target": "__end__", "label": "", "conditional": False},
+        ],
+        "layout": {
+            "search": (360, 548),
+            "assemble": (580, 548),
+            "draft_entry": (900, 548),
+            "need_audit": (900, 654),
+            "draft_assemble": (900, 760),
+            "prompt_refine": (900, 866),
+            "provider_route": (900, 972),
+            "generate": (900, 1088),
+            "model_review": (900, 1194),
+            "draft_finalize": (900, 1300),
+            "idea_settle": (900, 1416),
+            "__end__": (660, 1532),
+        },
+        "group_bands": [
+            ["入口理解", 92, 476],
+            ["灵感材料", 508, 592],
+            ["随想成稿", 620, 1242],
+            ["确认沉淀", 1268, 1570],
+        ],
+    },
+}
+
+
+def _visual_mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
+    """Build a Mermaid view that matches the filtered Web visualization."""
+    node_by_id = {node["id"]: node for node in nodes}
+    lines = ["flowchart TD"]
+    for node in nodes:
+        label = str(node.get("label") or node["id"]).replace('"', "'")
+        lines.append(f'  {node["id"]}["{label}"]')
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if source not in node_by_id or target not in node_by_id:
+            continue
+        label = str(edge.get("label") or "").strip().replace('"', "'")
+        if label:
+            lines.append(f'  {source} -- "{label}" --> {target}')
+        else:
+            lines.append(f"  {source} --> {target}")
+    return "\n".join(lines)
+
+
 def _outline_file_for(novel_id: str | None) -> Path | None:
     try:
         from app.project_structure import find_related_structure_file, resolve_structure_target
@@ -1349,3 +1555,94 @@ def get_graph():
         if _GRAPH is None:
             _GRAPH = build_graph()
     return _GRAPH
+
+
+def graph_visualization(project_kind: str = "generic") -> dict[str, Any]:
+    """Return a read-only native LangGraph view for the Web UI.
+
+    The runtime backbone comes from the compiled LangGraph object. The visual
+    profile then narrows that shared backbone to the selected project kind and
+    adds type capabilities that live outside the core text graph, such as short
+    film visual prompt/image generation or casual-project idea settlement.
+    """
+    from app.workflow_status import STAGE_LABELS
+
+    normalized_kind = project_kind if project_kind in PROJECT_GRAPH_PROFILES else "generic"
+    profile = PROJECT_GRAPH_PROFILES[normalized_kind]
+    graph = get_graph().get_graph(xray=True)
+    visible = profile.get("visible")
+    visible_ids: set[str] | None = set(visible) if visible else None
+    extra_nodes = set(profile.get("extra_nodes") or [])
+    if visible_ids is not None:
+        visible_ids |= extra_nodes
+    nodes: list[dict[str, Any]] = []
+    for node_id in [*graph.nodes.keys(), *profile.get("extra_nodes", [])]:
+        if visible_ids is not None and node_id not in visible_ids:
+            continue
+        label = STAGE_LABELS.get(node_id) or {
+            "__start__": "开始",
+            "__end__": "结束",
+            "route_intent": "意图路由",
+            "compress_memory": "记忆压缩",
+            "prepare_project": "项目准备",
+            "build_index": "构建索引",
+            "review": "章节审查",
+            "assemble": "材料组装",
+            "search": "参考检索",
+            "draft_entry": "创作入口",
+            "idea_settle": "灵感沉淀",
+            "visual_prompt": "分镜提示词",
+            "image_plan": "生图参数",
+            "image_generate": "生成画面",
+            "storyboard_archive": "影像归档",
+        }.get(node_id, node_id)
+        x, y = dict(GRAPH_BASE_LAYOUT, **(profile.get("layout") or {})).get(
+            node_id,
+            (160 + (len(nodes) % 5) * 200, 1640 + (len(nodes) // 5) * 110),
+        )
+        nodes.append({
+            "id": node_id,
+            "label": label,
+            "group": GRAPH_NODE_GROUPS.get(node_id, "其他"),
+            "description": GRAPH_NODE_DESCRIPTIONS.get(node_id, ""),
+            "system": node_id in {"__start__", "__end__"},
+            "lightweight": normalized_kind in {"short_film", "generic"} and node_id == "pre_review",
+            "type_capability": node_id in extra_nodes,
+            "position": {"x": x, "y": y},
+        })
+
+    node_ids = {node["id"] for node in nodes}
+    edges = [
+        {
+            "source": edge.source,
+            "target": edge.target,
+            "label": str(edge.data or ""),
+            "conditional": bool(edge.conditional),
+        }
+        for edge in graph.edges
+        if edge.source in node_ids and edge.target in node_ids
+    ]
+    edges.extend([
+        edge for edge in profile.get("extra_edges", [])
+        if edge.get("source") in node_ids and edge.get("target") in node_ids
+    ])
+    group_order = ["系统边界", "入口理解", "路由分支", "创作主线", "网页模型", "审查回环", "定稿确认", "其他"]
+    for node in nodes:
+        if node["group"] not in group_order:
+            group_order.insert(-1, node["group"])
+    groups = [
+        {"name": group, "nodes": [node["id"] for node in nodes if node["group"] == group]}
+        for group in group_order
+        if any(node["group"] == group for node in nodes)
+    ]
+    return {
+        "ok": True,
+        "project_kind": normalized_kind,
+        "mermaid": _visual_mermaid(nodes, edges),
+        "nodes": nodes,
+        "edges": edges,
+        "groups": groups,
+        "canvas": GRAPH_CANVAS,
+        "group_bands": profile.get("group_bands") or GRAPH_BASE_BANDS,
+        "notes": PROJECT_KIND_GRAPH_NOTES.get(normalized_kind) or PROJECT_KIND_GRAPH_NOTES["generic"],
+    }
