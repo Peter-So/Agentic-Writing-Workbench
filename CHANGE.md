@@ -1,5 +1,21 @@
 # 更新日志
 
+## Agentic-Writing-Workbench-v0.1.2
+
+本版本新增一键升级、自动备份和回滚能力，方便用户在保留本地项目资产的前提下更新到 GitHub 最新发布版本。
+
+### 新增
+
+- 新增 `scripts/upgrade-to-latest.py`，支持一键从 GitHub Release 升级框架代码。
+- 新增升级前自动备份与 `--rollback` 回滚能力。
+- 新增 `upgrade-manifest.json`，明确框架更新清单与用户数据保护清单。
+- 新增 `scripts/test-upgrade-workflow.py`，用临时项目验证 dry-run、升级、备份、回滚和用户数据保护。
+
+### 保护策略
+
+- 升级默认不覆盖 `.env.shared`、`.env.local`、`projects/`、`data/`、`logs/`、`tmp/`、`backups/`。
+- 用户项目、知识、技能、配置和创作资产不参与框架覆盖。
+
 ## Agentic-Writing-Workbench-v0.1.1
 
 本版本聚焦 Web UI 的项目流程图可视化能力，让不同项目类型展示符合自身创作流程的节点图，而不是共用同一张通用图。

@@ -98,6 +98,7 @@ projects/writing/novel-skill-suite/
 projects/writing/short-film-skill-suite/
 projects/writing/novel-acquisition/
 scripts/validate-writing-project.py
+scripts/upgrade-to-latest.py
 ```
 
 干净发布版不包含私有密钥、provider 会话、浏览器资料、参考小说原文、Chroma 数据、任务日志、生成产物或项目私有内容。
@@ -120,6 +121,40 @@ http://127.0.0.1:7861/
 ```
 
 更多说明见 [QUICK-START.md](QUICK-START.md)。
+
+## 升级、备份、回滚
+
+升级到 GitHub 最新 Release：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py
+```
+
+只预览会更新哪些文件，不实际修改：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py --dry-run
+```
+
+使用升级完成后输出的备份目录回滚：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py --rollback backups\upgrades\<backup-id>
+```
+
+升级器只更新 `upgrade-manifest.json` 中列出的框架文件，例如 `app/`、`scripts/`、`docs/`、README 和依赖元数据。以下用户项目、知识、技能、配置和创作资产永不覆盖：
+
+```text
+.env.shared
+.env.local
+projects/
+data/
+logs/
+tmp/
+backups/
+```
+
+每次真实升级都会创建 `backups/upgrades/<timestamp>/backup-manifest.json`，并保存被覆盖框架文件的旧版本，回滚时只按该清单还原本次升级触碰过的文件。
 
 ## 配置
 
@@ -167,6 +202,7 @@ CHROMA_DATABASE=default_database
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\validate-writing-project.py
+.\.venv\Scripts\python.exe scripts\test-upgrade-workflow.py
 node --check app\static-writing\app.js
 ```
 

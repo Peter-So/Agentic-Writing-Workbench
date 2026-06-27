@@ -98,6 +98,7 @@ projects/writing/novel-skill-suite/
 projects/writing/short-film-skill-suite/
 projects/writing/novel-acquisition/
 scripts/validate-writing-project.py
+scripts/upgrade-to-latest.py
 ```
 
 The clean export does not include private keys, provider sessions, browser profiles, reference novels, Chroma data, task logs, generated outputs, or project-specific content.
@@ -120,6 +121,40 @@ http://127.0.0.1:7861/
 ```
 
 More details: [QUICK-START.md](QUICK-START.md).
+
+## Upgrade, Backup, Rollback
+
+Upgrade to the latest GitHub release:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py
+```
+
+Preview changes without touching files:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py --dry-run
+```
+
+Rollback with the backup path printed after an upgrade:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upgrade-to-latest.py --rollback backups\upgrades\<backup-id>
+```
+
+The upgrader only updates framework files listed in `upgrade-manifest.json`, such as `app/`, `scripts/`, `docs/`, README files, and dependency metadata. It never overwrites local user projects, knowledge, skills, config, or creative assets under protected paths such as:
+
+```text
+.env.shared
+.env.local
+projects/
+data/
+logs/
+tmp/
+backups/
+```
+
+Each real upgrade creates `backups/upgrades/<timestamp>/backup-manifest.json` and stores previous copies of changed framework files so rollback can restore them.
 
 ## Configuration
 
@@ -167,6 +202,7 @@ CHROMA_DATABASE=default_database
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\validate-writing-project.py
+.\.venv\Scripts\python.exe scripts\test-upgrade-workflow.py
 node --check app\static-writing\app.js
 ```
 
