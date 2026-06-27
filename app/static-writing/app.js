@@ -64,6 +64,7 @@ const wikiCard = document.querySelector("#wikiCard");
 const sendBtn = document.querySelector("#sendBtn");
 const chatBtn = document.querySelector("#chatBtn");
 const doctorBtn = document.querySelector("#doctorBtn");
+const upgradeBtn = document.querySelector("#upgradeBtn");
 const chatModelSelect = document.querySelector("#chatModelSelect");
 const writingModelSelect = document.querySelector("#writingModelSelect");
 const reviewModelSelect = document.querySelector("#reviewModelSelect");
@@ -105,6 +106,7 @@ const FALLBACK_STAGE_PRESETS = {
   intervention: ["submit", "memory_lookup", "llm_analysis", "knowledge_settle", "memory_write", "policy_update", "impact_analyze", "primary_write", "primary_artifact", "related_write", "related_pending", "invocation_finalize", "pending_clear", "cleanup", "complete"],
   reference_import: ["reference_import_validate", "reference_import_save", "reference_import_analyze", "reference_import_five_dim", "reference_import_index", "reference_import_refresh"],
   archive: ["archive_submit", "archive_write", "overwrite_confirm", "overwrite", "archive_refresh", "complete"],
+  app_upgrade: ["upgrade_check", "upgrade_download", "upgrade_backup", "upgrade_apply", "upgrade_rollback", "upgrade_restart"],
 };
 const VISUAL_PROMPT_STAGES = [
   "visual_prompt_start", "visual_prompt_beat", "visual_prompt_scene", "visual_prompt_characters",
@@ -216,6 +218,12 @@ const UI_OPERATION_LABELS = {
   doctor_request: "发起诊断",
   doctor_check: "执行检查",
   doctor_render: "渲染诊断",
+  upgrade_check: "检查版本",
+  upgrade_download: "下载新版",
+  upgrade_backup: "创建备份",
+  upgrade_apply: "更新框架",
+  upgrade_rollback: "失败回滚",
+  upgrade_restart: "重启服务",
   trajectory_load: "加载轨迹",
   packet_generate: "生成复盘包",
   operation_done: "完成",
@@ -849,6 +857,7 @@ function setBusy(busy, label = "运行中") {
   sendBtn.disabled = busy;
   if (chatBtn) chatBtn.disabled = busy;
   doctorBtn.disabled = busy;
+  if (upgradeBtn) upgradeBtn.disabled = busy;
   if (createProjectBtn) createProjectBtn.disabled = busy;
   if (deleteProjectBtn) deleteProjectBtn.disabled = busy || !currentProject;
   if (projectFlowBtn) projectFlowBtn.disabled = busy || !currentProject;
@@ -4625,6 +4634,191 @@ async function runDoctor() {
   }
 }
 
+async function checkAppUpgrade() {
+  setBusy(true, "检查更新");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  try {
+    flow.step("upgrade_check");
+    const res = await fetch("/api/app-upgrade/check", { cache: "no-store" });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "检查更新失败");
+    flow.doneNodes.add("upgrade_check");
+    renderUpgradeCard(data);
+    flow.done();
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `检查更新失败：${error}`, "版本更新");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderUpgradeCard(data = {}) {
+  const release = data.release || {};
+  const item = document.createElement("article");
+  item.className = "message assistant";
+  const title = document.createElement("div");
+  title.className = "message-title";
+  title.textContent = data.has_update ? "发现新版本" : "当前已是最新版本";
+  item.appendChild(title);
+
+  const body = document.createElement("div");
+  body.className = "upgrade-card";
+  const activeTasks = data.active_tasks || {};
+  const blockers = Array.isArray(activeTasks.blockers) ? activeTasks.blockers : [];
+  body.innerHTML = `
+    <div class="upgrade-version-row">
+      <span>当前：${escapeHtml(data.current_version || "未知")}</span>
+      <span>最新：${escapeHtml(data.latest_version || "未知")}</span>
+    </div>
+    <div class="upgrade-release-title">${escapeHtml(release.name || data.latest_version || "Release")}</div>
+    <pre class="upgrade-notes">${escapeHtml(release.body || "暂无发布说明。")}</pre>
+    <div class="upgrade-safety muted-line">升级前会自动备份；不会覆盖 .env、projects、data、logs、tmp、backups 等用户资产。</div>
+    ${blockers.length ? `<div class="upgrade-blockers">
+      <strong>暂不能升级：存在 ${blockers.length} 个未完成任务</strong>
+      ${blockers.slice(0, 5).map((item) => `<div>${escapeHtml(upgradeBlockerText(item))}</div>`).join("")}
+    </div>` : ""}
+  `;
+  if (data.has_update) {
+    const actions = document.createElement("div");
+    actions.className = "upgrade-actions";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "button danger";
+    confirmBtn.type = "button";
+    confirmBtn.textContent = "确认升级";
+    confirmBtn.disabled = blockers.length > 0;
+    confirmBtn.title = blockers.length ? "请先完成、归档或取消未完成任务后再升级。" : "备份框架文件并升级到最新版本。";
+    confirmBtn.addEventListener("click", () => startAppUpgrade(data.latest_version || ""));
+    actions.appendChild(confirmBtn);
+    if (release.html_url) {
+      const link = document.createElement("a");
+      link.className = "button ghost";
+      link.href = release.html_url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = "查看 Release";
+      actions.appendChild(link);
+    }
+    body.appendChild(actions);
+  }
+  item.appendChild(body);
+  messagesEl.appendChild(item);
+  scrollMessagesToBottom();
+}
+
+function upgradeBlockerText(item = {}) {
+  const typeLabel = {
+    provider_job: "网页模型任务",
+    invocation: "创作任务",
+    pending_intent: "待恢复任务",
+  }[item.type] || "任务";
+  const id = item.id || item.invocation_id || "";
+  const project = item.novel_id ? `项目 ${item.novel_id}` : "";
+  const status = item.status ? `状态 ${item.status}` : "";
+  const task = item.task ? `类型 ${item.task}` : "";
+  return [typeLabel, project, id, status, task].filter(Boolean).join("｜");
+}
+
+async function startAppUpgrade(version = "") {
+  const confirmed = window.confirm("确认升级到最新版本？升级会先备份框架文件，完成后自动重启服务。");
+  if (!confirmed) return;
+  setBusy(true, "升级中");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  flow.step("upgrade_download");
+  try {
+    const payload = {
+      version,
+      host: location.hostname || "127.0.0.1",
+      port: Number(location.port || 7861),
+    };
+    const res = await fetch("/api/app-upgrade/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "启动升级失败");
+    addMessage("system", "升级任务已启动，页面会在服务重启后自动刷新。", "版本更新");
+    await pollAppUpgrade(flow);
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `升级失败：${error}`, "版本更新");
+    setBusy(false);
+  }
+}
+
+async function pollAppUpgrade(flow) {
+  let restartExpected = false;
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      const data = await readJsonResponse(res);
+      assertApiOk(res, data, "读取升级状态失败");
+      updateUpgradeFlow(flow, data);
+      if (data.status === "failed") {
+        flow.fail();
+        setBusy(false);
+        addMessage("system", data.message || "升级失败。", "版本更新");
+        return;
+      }
+      if (data.status === "restarting") {
+        restartExpected = true;
+      }
+    } catch (error) {
+      if (restartExpected) {
+        await waitForServiceRestore();
+        return;
+      }
+    }
+    await delay(1500);
+  }
+  flow.fail();
+  setBusy(false);
+  addMessage("system", "升级等待超时，请手动刷新页面或检查服务。", "版本更新");
+}
+
+function updateUpgradeFlow(flow, data = {}) {
+  const stageMap = {
+    queued: "upgrade_check",
+    download: "upgrade_download",
+    backup: "upgrade_backup",
+    apply: "upgrade_apply",
+    rollback: "upgrade_rollback",
+    restart: "upgrade_restart",
+  };
+  const node = stageMap[data.stage] || "upgrade_apply";
+  flow.step(node);
+  if (data.backup_dir) {
+    setProjectActionStatus(`升级状态：${data.message || data.stage}；备份：${data.backup_dir}`);
+  } else {
+    setProjectActionStatus(`升级状态：${data.message || data.stage}`);
+  }
+}
+
+async function waitForServiceRestore() {
+  setProjectActionStatus("服务正在重启，等待恢复...");
+  const deadline = Date.now() + 90 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Keep waiting while the old process exits and the restart helper starts the new one.
+    }
+    await delay(1800);
+  }
+  setBusy(false);
+  addMessage("system", "服务重启等待超时，请手动刷新或重新启动。", "版本更新");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function groupedDoctorChecks(checks) {
   const framework = [];
   const others = [];
@@ -4781,6 +4975,9 @@ projectIdInput.addEventListener("keydown", (event) => {
 });
 deleteProjectBtn.addEventListener("click", deleteCurrentProject);
 doctorBtn.addEventListener("click", runDoctor);
+if (upgradeBtn) {
+  upgradeBtn.addEventListener("click", checkAppUpgrade);
+}
 if (chatBtn) {
   chatBtn.addEventListener("click", runPlainChat);
 }

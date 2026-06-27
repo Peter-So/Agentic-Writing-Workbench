@@ -241,6 +241,11 @@ button, input, textarea, select { font: inherit; }
   color: var(--muted);
 }
 
+.button.ghost[href] {
+  display: inline-flex;
+  align-items: center;
+}
+
 .button:disabled {
   opacity: .55;
   cursor: not-allowed;
@@ -1432,6 +1437,59 @@ textarea {
 
 .acceptance-row.done .button {
   opacity: .65;
+}
+
+.upgrade-card {
+  display: grid;
+  gap: 10px;
+}
+
+.upgrade-version-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.upgrade-version-row span {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.upgrade-release-title {
+  font-weight: 700;
+}
+
+.upgrade-notes {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.upgrade-blockers {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff7e6;
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.upgrade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .acceptance-editor {

@@ -553,9 +553,45 @@ class CleanupRequest(BaseModel):
     include_global: bool = False
 
 
+class AppUpgradeRequest(BaseModel):
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=7861, ge=1, le=65535)
+    version: str = Field(default="")
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/app-upgrade/check")
+def app_upgrade_check() -> dict[str, Any]:
+    from app.app_upgrade import check_latest_release
+
+    try:
+        return check_latest_release()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/app-upgrade/status")
+def app_upgrade_status_endpoint() -> dict[str, Any]:
+    from app.app_upgrade import upgrade_status
+
+    return upgrade_status()
+
+
+@app.post("/api/app-upgrade/apply")
+def app_upgrade_apply(req: AppUpgradeRequest) -> dict[str, Any]:
+    from app.app_upgrade import start_upgrade
+
+    host = str(req.host or "127.0.0.1").strip()
+    if host not in {"127.0.0.1", "localhost", "0.0.0.0"}:
+        raise HTTPException(status_code=400, detail="升级重启只允许本机 host")
+    try:
+        return start_upgrade(host=host, port=req.port, version=req.version.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/writing/status")

@@ -75,5 +75,16 @@ class ProviderJobManager:
     def get(self, job_id: str) -> ProviderJob | None:
         return self._jobs.get(job_id)
 
+    def active_jobs(self) -> list[dict[str, Any]]:
+        active: list[dict[str, Any]] = []
+        for job in self._jobs.values():
+            snapshot = job.snapshot()
+            if not snapshot.get("done") or any(
+                item.get("status") in {"queued", "running"}
+                for item in snapshot.get("providers") or []
+            ):
+                active.append(snapshot)
+        return active
+
 
 jobs = ProviderJobManager()

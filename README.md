@@ -124,6 +124,10 @@ More details: [QUICK-START.md](QUICK-START.md).
 
 ## Upgrade, Backup, Rollback
 
+In the Web UI, click **Update** in the top-right toolbar to check the latest GitHub Release. The page shows the release notes and asks for confirmation before upgrading. After confirmation, the backend downloads the release, creates a backup, updates framework files, restarts the service, and the browser waits for the service to come back.
+
+Before upgrading, the backend checks active provider jobs, unfinished writing invocations, and recoverable pending intents. If any task is still running or waiting for confirmation/archive, the upgrade is blocked until the task is completed, archived, rejected, or otherwise cleared.
+
 Upgrade to the latest GitHub release:
 
 ```powershell
@@ -155,6 +159,8 @@ backups/
 ```
 
 Each real upgrade creates `backups/upgrades/<timestamp>/backup-manifest.json` and stores previous copies of changed framework files so rollback can restore them.
+
+If a framework-file copy fails during upgrade, the upgrader attempts to rollback the files touched in that upgrade before reporting failure. Web upgrades also restart after a successful upgrade or a rollback.
 
 ## Configuration
 

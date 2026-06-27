@@ -258,23 +258,33 @@ def apply_upgrade(plan: UpgradePlan) -> Path:
     records: list[dict[str, Any]] = []
     print_plan(plan, dry_run=False)
 
-    for source, target in plan.files:
-        relative = target.relative_to(plan.target_root)
-        record = {
-            "path": relative.as_posix(),
-            "existed": target.exists(),
-            "sha256_before": sha256(target) if target.exists() else None,
-            "sha256_source": sha256(source),
-        }
-        if target.exists():
-            backup_target = backup_files_dir / relative
-            backup_target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup_target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        record["sha256_after"] = sha256(target)
-        records.append(record)
-
+    try:
+        for source, target in plan.files:
+            relative = target.relative_to(plan.target_root)
+            record = {
+                "path": relative.as_posix(),
+                "existed": target.exists(),
+                "sha256_before": sha256(target) if target.exists() else None,
+                "sha256_source": sha256(source),
+            }
+            if target.exists():
+                backup_target = backup_files_dir / relative
+                backup_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup_target)
+            records.append(record)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            record["sha256_after"] = sha256(target)
+    except Exception as exc:
+        write_backup_manifest(backup_dir, plan, records)
+        try:
+            rollback(plan.target_root, backup_dir)
+        except Exception as rollback_exc:
+            raise UpgradeError(
+                f"升级复制失败，且自动回滚失败：{type(exc).__name__}: {exc}; "
+                f"rollback={type(rollback_exc).__name__}: {rollback_exc}"
+            ) from rollback_exc
+        raise UpgradeError(f"升级复制失败，已自动回滚：{type(exc).__name__}: {exc}") from exc
     write_backup_manifest(backup_dir, plan, records)
     return backup_dir
 

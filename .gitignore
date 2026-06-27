@@ -11,8 +11,10 @@ projects/*/.env
 projects/*/.env.local
 
 # Runtime state.
+backups/
 logs/
 tmp/
+data/app-upgrade-status.json
 data/browser-profiles/*
 !data/browser-profiles/.gitkeep
 data/chat-history/*

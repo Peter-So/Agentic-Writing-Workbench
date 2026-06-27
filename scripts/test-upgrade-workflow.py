@@ -28,7 +28,10 @@ def main() -> int:
         assert_text(target / "scripts" / "framework-tool.py", "new tool")
         assert_text(target / "docs" / "upgrade.md", "new doc")
         assert_text(target / ".env.shared", "SECRET=local")
+        assert_text(target / "data" / "writing_intent_memory" / "short_term_pending.json", "pending memory")
+        assert_text(target / "data" / "chat_memory.db", "checkpoint db")
         assert_text(target / "projects" / "writing" / "novels" / "001" / "正文" / "chapter.md", "user chapter")
+        assert_text(target / "projects" / "writing" / "novels" / "001" / "日志" / "调用记录" / "wr-test.json", "invocation log")
         assert_text(target / "data" / "knowledge.md", "user knowledge")
 
         backup_dir = latest_backup(target)
@@ -40,8 +43,36 @@ def main() -> int:
         assert_text(target / "scripts" / "framework-tool.py", "old tool")
         assert not (target / "docs" / "upgrade.md").exists(), "rollback should remove files created by upgrade"
         assert_text(target / ".env.shared", "SECRET=local")
+        assert_text(target / "data" / "writing_intent_memory" / "short_term_pending.json", "pending memory")
+        assert_text(target / "data" / "chat_memory.db", "checkpoint db")
         assert_text(target / "projects" / "writing" / "novels" / "001" / "正文" / "chapter.md", "user chapter")
+        assert_text(target / "projects" / "writing" / "novels" / "001" / "日志" / "调用记录" / "wr-test.json", "invocation log")
         assert_text(target / "data" / "knowledge.md", "user knowledge")
+
+        failing_target = base / "failing-target"
+        failing_source = base / "failing-source"
+        create_failing_target(failing_target)
+        create_failing_source(failing_source)
+        failed = subprocess.run(
+            [
+                sys.executable,
+                str(UPGRADE_SCRIPT),
+                "--project-dir",
+                str(failing_target),
+                "--source-dir",
+                str(failing_source),
+            ],
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert failed.returncode != 0, "conflicting target should fail upgrade"
+        assert_text(failing_target / "app" / "a.py", "old a")
+        assert_text(failing_target / "app" / "conflict", "blocking file")
 
     print("upgrade workflow test passed")
     return 0
@@ -52,7 +83,10 @@ def create_target(root: Path) -> None:
     write(root / "app" / "static-writing" / "app.js", "old app")
     write(root / "scripts" / "framework-tool.py", "old tool")
     write(root / ".env.shared", "SECRET=local")
+    write(root / "data" / "writing_intent_memory" / "short_term_pending.json", "pending memory")
+    write(root / "data" / "chat_memory.db", "checkpoint db")
     write(root / "projects" / "writing" / "novels" / "001" / "正文" / "chapter.md", "user chapter")
+    write(root / "projects" / "writing" / "novels" / "001" / "日志" / "调用记录" / "wr-test.json", "invocation log")
     write(root / "data" / "knowledge.md", "user knowledge")
     write(root / "upgrade-manifest.json", manifest_text())
 
@@ -63,8 +97,27 @@ def create_source(root: Path) -> None:
     write(root / "scripts" / "framework-tool.py", "new tool")
     write(root / "docs" / "upgrade.md", "new doc")
     write(root / "projects" / "writing" / "novels" / "001" / "正文" / "chapter.md", "SHOULD NOT COPY")
+    write(root / "projects" / "writing" / "novels" / "001" / "日志" / "调用记录" / "wr-test.json", "SHOULD NOT COPY")
     write(root / "data" / "knowledge.md", "SHOULD NOT COPY")
+    write(root / "data" / "writing_intent_memory" / "short_term_pending.json", "SHOULD NOT COPY")
+    write(root / "data" / "chat_memory.db", "SHOULD NOT COPY")
     write(root / ".env.shared", "SHOULD NOT COPY")
+    write(root / "upgrade-manifest.json", manifest_text())
+
+
+def create_failing_target(root: Path) -> None:
+    write(root / "README.md", "target readme")
+    write(root / "app" / "a.py", "old a")
+    write(root / "app" / "conflict", "blocking file")
+    write(root / "scripts" / "framework-tool.py", "old tool")
+    write(root / "upgrade-manifest.json", manifest_text())
+
+
+def create_failing_source(root: Path) -> None:
+    write(root / "README.md", "source readme")
+    write(root / "app" / "a.py", "new a")
+    write(root / "app" / "conflict" / "leaf.py", "cannot copy because target parent is a file")
+    write(root / "scripts" / "framework-tool.py", "new tool")
     write(root / "upgrade-manifest.json", manifest_text())
 
 

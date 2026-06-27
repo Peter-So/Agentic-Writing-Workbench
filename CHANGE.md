@@ -1,5 +1,22 @@
 # 更新日志
 
+## Agentic-Writing-Workbench-v0.1.3
+
+本版本在 v0.1.2 的 CLI 升级能力基础上，补齐 Web UI 检查新版、用户确认升级、后台备份更新、失败回滚与服务重启闭环。
+
+### 新增
+
+- Web UI 顶部新增“更新”入口，可检查 GitHub 最新 Release、展示新版内容，并由用户确认升级。
+- 新增 `/api/app-upgrade/check`、`/api/app-upgrade/status`、`/api/app-upgrade/apply`，支持 Web 端检查、执行升级和轮询状态。
+- 新增 `app/app_upgrade.py`，统一管理版本检查、后台升级、状态持久化、失败回滚和重启协调。
+- 新增 `scripts/restart-workbench.py`，升级或回滚后可等待旧服务退出并重新启动 Web 服务。
+- 升级前新增后端任务门禁，检查 provider job、未完成 invocation、pending intent；存在运行中或待确认/归档任务时阻止升级。
+
+### 优化
+
+- `scripts/upgrade-to-latest.py` 在复制框架文件失败时会基于本次备份清单自动回滚。
+- Web UI 升级流程接入顶部状态流，展示检查版本、下载新版、创建备份、更新框架、失败回滚、重启服务。
+
 ## Agentic-Writing-Workbench-v0.1.2
 
 本版本新增一键升级、自动备份和回滚能力，方便用户在保留本地项目资产的前提下更新到 GitHub 最新发布版本。
