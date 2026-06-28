@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.project_kinds import SHORT_FILM_KIND, STRONG_NOVEL_KIND
+from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
 
 
 def decide_review_strategy(
@@ -19,6 +20,13 @@ def decide_review_strategy(
     task_key = task or ""
     risks = _risk_labels(need_audit, request_harness, token_budget, provider_route)
     if kind == STRONG_NOVEL_KIND:
+        if is_novel_planning_task(kind, task_key):
+            return {
+                "mode": "deterministic_checklist",
+                "model": "none",
+                "reason": "小说前期概念/设定/人物/大纲属于结构规划稿，只做低成本结构完整性检查，不触发正文级跨模型审查。",
+                "risks": risks,
+            }
         return {
             "mode": "cross_model",
             "model": "gpt",
@@ -59,6 +67,17 @@ def deterministic_review(
     kind = project_kind or ""
     task_key = task or ""
     issues: list[dict[str, Any]] = []
+    if kind == STRONG_NOVEL_KIND:
+        profile = novel_stage_profile(task_key)
+        signals = profile.get("acceptance_signals") or []
+        if signals and profile.get("flow") != "full_generation":
+            _require_any(
+                text,
+                signals,
+                issues,
+                f"novel_{profile.get('id')}_signal",
+                f"{profile.get('label') or '小说前期'}稿缺少可验收结构信号：{', '.join(signals[:8])}。",
+            )
     if kind == SHORT_FILM_KIND:
         if task_key == "screenplay":
             _require(text, ["场景", "动作", "对白"], issues, "screenplay_basic_format")

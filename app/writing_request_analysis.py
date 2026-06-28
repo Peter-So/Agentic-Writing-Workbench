@@ -94,9 +94,19 @@ def analyze_writing_request(
     target_paths = structure_context.get("target_paths") or []
     target_labels = structure_context.get("target_labels") or []
     task_roles = structure_context.get("task_roles") or {}
+    stage_options: list[dict[str, Any]] = []
+    try:
+        from app.project_kinds import STRONG_NOVEL_KIND
+        from app.writing_task_profiles import stage_options_for_prompt
+
+        if (structure_context.get("project_kind") or project_kind) == STRONG_NOVEL_KIND:
+            stage_options = stage_options_for_prompt()
+    except Exception:
+        stage_options = []
     schema = {
         "intent": "draft | revise | review | assemble | search | build_index",
         "task": "logline | setting | world | outline | character | beat_sheet | prose | expansion | fix | screenplay | storyboard | visual_prompt | image | generic",
+        "creative_stage": "concept | setting | world | character | outline | plot | prose",
         "deliverable": "generation | audit_report | material_bundle | search_results | rewrite | answer",
         "target_chapter": "positive integer or null",
         "context_chapters": "array of positive integers needed as evidence/context",
@@ -107,7 +117,7 @@ def analyze_writing_request(
         "affected_files": ["paths or labels from project_structure, not hard-coded"],
         "involved_characters": ["character names explicitly involved"],
         "plot_points": ["plot/event points explicitly involved"],
-        "target_sections": ["section titles, scene names, or exact phrases that locate the affected text"],
+        "target_sections": ["section titles, scene names, exact quoted phrases, or paragraph anchors that locate the affected text"],
         "impact_reason": "short Chinese explanation of why multiple files may be affected",
         "confidence": "0.0-1.0",
         "reason": "short Chinese reason",
@@ -118,6 +128,7 @@ def analyze_writing_request(
         "project_kind": structure_context.get("project_kind") or project_kind or "",
         "documents": structure_context.get("documents") or [],
         "task_roles": task_roles,
+        "novel_stage_options": stage_options,
     }, ensure_ascii=False, indent=2) if structure_context else "（未加载项目结构 Wiki）"
     kind_rules = {
         "novel_strong": (
@@ -140,9 +151,14 @@ def analyze_writing_request(
         "若用户要求检查/评估/分析已有材料并需要系统输出报告，deliverable 应为 audit_report，answer_style 应为 structured_report，flow_entry 必须为 draft_entry。\n"
         "若用户要求写作/生成/扩写，deliverable 应为 generation。\n"
         f"{kind_rules}\n"
+        "小说项目必须同时判断 creative_stage：概念 concept、基础设定 setting、世界观 world、人物 character、大纲 outline、情节 plot、正文 prose。\n"
+        "creative_stage 与 task 必须一致；例如 concept→logline，setting→setting，world→world，character→character，outline→outline，plot→beat_sheet，prose→prose/expansion/fix。\n"
+        "用户在正文创作阶段回头修改大纲、设定、情节时，creative_stage 必须标为实际要修改的目标阶段（outline/setting/plot），不要误判为 prose。\n"
+        "用户要求精修、修改、扩写正文某一段/某几行/某个场景时，creative_stage=prose，task=fix 或 expansion，target_sections 必须尽量填原文引句、段落关键词、行号提示或场景锚点。\n"
+        "如果项目当前阶段与用户明确意图冲突，仍以用户明确意图为准，但 reason 中说明这是回补前置材料还是跳到后置阶段。\n"
         "affected_materials 必须优先使用项目结构 Wiki 中的 role；affected_files 必须优先使用项目结构 Wiki 中的 path 或 label。\n"
         "用户说调整某个人物、某段剧情、某个设定、某个节拍、某段剧本、某个分镜、某条随想时，不要只选单文件；affected_materials/affected_files 必须列出可能被牵连的结构材料。\n"
-        "involved_characters 填本次明确涉及的人物名；plot_points 填涉及的剧情/事件；target_sections 填能定位文件位置的标题、段落关键词或场景名。\n"
+        "involved_characters 填本次明确涉及的人物名；plot_points 填涉及的剧情/事件；target_sections 填能定位文件位置的标题、段落关键词、原文引句、行号提示或场景名。\n"
         "context_chapters 填需要一起读取的章节材料，例如用户要求根据前两章检查第三章，应包含 1,2,3。\n\n"
         f"输出 JSON schema 示例：{json.dumps(schema, ensure_ascii=False)}\n\n"
         f"当前项目：{novel_id or ''}\n"
@@ -166,13 +182,14 @@ def analyze_writing_request(
     if target_chapter and target_chapter not in context_chapters:
         context_chapters.append(target_chapter)
         context_chapters = sorted(set(context_chapters))
-    return {
+    analysis = {
         "ok": True,
         "source": "llm",
         "model_key": selected_model,
         "project_progress": progress,
         "intent": str(parsed.get("intent") or mode or "draft"),
         "task": str(parsed.get("task") or task or "prose"),
+        "creative_stage": str(parsed.get("creative_stage") or "").strip(),
         "deliverable": str(parsed.get("deliverable") or "generation"),
         "target_chapter": target_chapter,
         "context_chapters": context_chapters,
@@ -188,16 +205,36 @@ def analyze_writing_request(
         "confidence": parsed.get("confidence"),
         "reason": str(parsed.get("reason") or "").strip(),
     }
+    try:
+        from app.writing_task_profiles import enrich_novel_stage_analysis
+
+        analysis = enrich_novel_stage_analysis(
+            analysis,
+            project_kind=structure_context.get("project_kind") or project_kind,
+            project_progress=progress,
+        )
+    except Exception:
+        pass
+    analysis = _attach_prose_locations(
+        analysis,
+        novel_id=novel_id,
+        project_kind=structure_context.get("project_kind") or project_kind,
+        message=message,
+    )
+    return analysis
 
 
 def fallback_request_analysis(*, message: str, mode: str, task: str, chapter: int | None,
-                              error: str = "") -> dict[str, Any]:
+                              error: str = "", project_kind: str | None = None,
+                              project_progress: dict[str, Any] | None = None,
+                              novel_id: str | None = None) -> dict[str, Any]:
     """Non-routing fallback: preserve user/UI state when the LLM analyzer fails."""
-    return {
+    analysis = {
         "ok": False,
         "source": "fallback",
         "intent": mode or "draft",
         "task": task or "prose",
+        "creative_stage": "",
         "deliverable": "generation",
         "target_chapter": chapter,
         "context_chapters": [chapter] if chapter else [],
@@ -214,3 +251,54 @@ def fallback_request_analysis(*, message: str, mode: str, task: str, chapter: in
         "reason": "LLM 请求理解失败，保留原始 UI 参数。",
         "error": error,
     }
+    try:
+        from app.writing_task_profiles import enrich_novel_stage_analysis
+
+        analysis = enrich_novel_stage_analysis(
+            analysis,
+            project_kind=project_kind,
+            project_progress=project_progress or {},
+        )
+    except Exception:
+        pass
+    analysis = _attach_prose_locations(
+        analysis,
+        novel_id=novel_id,
+        project_kind=project_kind,
+        message=message,
+    )
+    return analysis
+
+
+def _attach_prose_locations(
+    analysis: dict[str, Any],
+    *,
+    novel_id: str | None,
+    project_kind: str | None,
+    message: str,
+) -> dict[str, Any]:
+    try:
+        from app.project_kinds import STRONG_NOVEL_KIND
+        from app.prose_locator import is_prose_refinement_intent, locate_prose_targets
+
+        if project_kind != STRONG_NOVEL_KIND or not is_prose_refinement_intent(analysis):
+            return analysis
+        locations = locate_prose_targets(
+            novel_id=novel_id,
+            chapter=_clean_int(analysis.get("target_chapter")),
+            analysis=analysis,
+            message=message,
+        )
+        if not locations:
+            return analysis
+        enriched = dict(analysis)
+        enriched["prose_locations"] = locations
+        files = list(enriched.get("affected_files") or [])
+        for loc in locations:
+            path = loc.get("path")
+            if path and path not in files:
+                files.append(path)
+        enriched["affected_files"] = files[:10]
+        return enriched
+    except Exception:
+        return analysis

@@ -4,6 +4,7 @@ from typing import Any
 
 from app.config import load_runtime_config
 from app.llm_client import create_llm, resolve_text_model
+from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
 
 
 # 材料驱动生成：严格遵守 00-material-driven-workflow.md 的 Prompt 结构
@@ -18,6 +19,25 @@ SYSTEM_INSTRUCTION = (
     "用本项目的人物、设定、风格重新表达。严禁脱离材料自由发挥。"
     "违反任何一条规则约束即为失败。"
 )
+
+
+def _novel_planning_output_rules(task: str | None) -> list[str]:
+    profile = novel_stage_profile(task)
+    signals = profile.get("acceptance_signals") or []
+    sections = profile.get("material_sections") or []
+    common = [
+        f"[阶段标识] {profile.get('label') or '小说前期规划'}（{profile.get('id') or 'planning'}）",
+        "[输出格式] 输出可直接归档到项目结构文件的结构稿，不要写成章节正文。",
+        "不要在段落末尾标注 provider、五维、技法、源文档等来源标签。",
+        "不要输出“修改建议”“优化要点”“本轮说明”“可选方案对比”，只保留用户可采纳的定稿内容。",
+    ]
+    if sections:
+        common.append("材料边界优先围绕：" + "、".join(sections) + "。")
+    if signals:
+        common.append("建议包含：" + "、".join(signals) + "。")
+    else:
+        common.append("按用户目标输出结构清晰的小说前期规划稿。")
+    return common
 
 
 def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | None,
@@ -85,6 +105,21 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
     outline_context = materials.get("outline_context")
     if outline_context:
         parts.append(f"### 大纲连续性对照材料\n[源文档·大纲连续性]\n{outline_context}")
+
+    target_locations = materials.get("target_prose_locations") or []
+    if isinstance(target_locations, list) and target_locations:
+        lines = ["### 待改正文定位（只围绕这些行修订，不要重写整章）"]
+        for idx, loc in enumerate(target_locations[:5], start=1):
+            if not isinstance(loc, dict):
+                continue
+            excerpt = str(loc.get("excerpt") or "").strip()
+            if not excerpt:
+                continue
+            start = loc.get("start_line") or "?"
+            end = loc.get("end_line") or "?"
+            lines.append(f"[正文·片段{idx}·第{start}-{end}行]\n{excerpt[:1000]}")
+        if len(lines) > 1:
+            parts.append("\n\n".join(lines))
 
     profiles = materials.get("character_profiles")
     if profiles:
@@ -240,6 +275,17 @@ def build_generation_prompt(
             "",
             "[输出格式] 按电影短片脚本/开发文档格式输出；如写剧本，使用场景标题、动作描写、角色名、对白。",
             "少写小说式内心旁白，多写可拍摄的动作、画面和声音。",
+        ]
+    elif is_novel_planning_task(project_kind, task):
+        human_sections += [
+            "",
+            *_novel_planning_output_rules(task),
+        ]
+    elif project_kind == "novel_strong" and task in {"expansion", "fix"}:
+        human_sections += [
+            "",
+            "[输出格式] 只输出可替换/可插入的修订正文，不要解释过程。",
+            "必须围绕待改正文定位处理，不要重写整章；不要在段尾标注 provider、五维、角色、技法或源文档信息。",
         ]
     elif project_kind == "generic":
         human_sections += [

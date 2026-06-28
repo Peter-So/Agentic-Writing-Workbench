@@ -87,6 +87,7 @@ let activeWorkflowStatus = null;
 let pendingWorkflowPersistTimer = null;
 let restoredWorkflowFlow = null;
 let pendingWorkflowRecovery = null;
+let composerBusy = false;
 let latestLessonSuggestions = [];
 let latestHarnessSuggestions = [];
 const adoptingLessonKeys = new Set();
@@ -853,9 +854,23 @@ function restoreFlowFromWorkflowStatus(status = {}) {
   return flow;
 }
 
+function promptText(value = messageInput?.value) {
+  return String(value || "").trim();
+}
+
+function hasPromptText(value = messageInput?.value) {
+  return promptText(value).length > 0;
+}
+
+function updateComposerButtons() {
+  const disabled = composerBusy || !hasPromptText();
+  if (sendBtn) sendBtn.disabled = disabled;
+  if (chatBtn) chatBtn.disabled = disabled;
+}
+
 function setBusy(busy, label = "运行中") {
-  sendBtn.disabled = busy;
-  if (chatBtn) chatBtn.disabled = busy;
+  composerBusy = Boolean(busy);
+  updateComposerButtons();
   doctorBtn.disabled = busy;
   if (upgradeBtn) upgradeBtn.disabled = busy;
   if (createProjectBtn) createProjectBtn.disabled = busy;
@@ -4981,6 +4996,8 @@ if (upgradeBtn) {
 if (chatBtn) {
   chatBtn.addEventListener("click", runPlainChat);
 }
+messageInput.addEventListener("input", updateComposerButtons);
+updateComposerButtons();
 closeFileBtn.addEventListener("click", showConversation);
 if (closeWikiBtn) {
   closeWikiBtn.addEventListener("click", showConversation);

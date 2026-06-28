@@ -252,15 +252,18 @@ def related_file_context(
     nid = normalize_novel_id(novel_id)
     targets = _target_names(nid, analysis, task)
     refs: list[dict[str, Any]] = []
+    prose_refs = _prose_refs(nid, analysis, task, chapter)
     for target in targets:
         if _is_chapter_target(target):
-            refs.extend(_chapter_refs(nid, chapter))
+            refs.extend(prose_refs or _chapter_refs(nid, chapter))
             continue
         resolved = _resolve_target(nid, target)
         if not resolved:
             continue
         role, path = resolved
         refs.append(_file_ref(path, role=role, target=target, chapter=chapter, analysis=analysis))
+    if prose_refs and not any(ref.get("role") == "chapter_body" for ref in refs):
+        refs.extend(prose_refs)
     unique: dict[str, dict[str, Any]] = {}
     for ref in refs:
         key = f"{ref.get('path')}:{ref.get('start_line')}:{ref.get('end_line')}"
@@ -345,6 +348,24 @@ def _chapter_refs(novel_id: str, chapter: int | None) -> list[dict[str, Any]]:
     for path in candidates[:3]:
         refs.append(_file_ref(path, role="prose", target="章节正文", chapter=chapter, analysis={}))
     return refs
+
+
+def _prose_refs(novel_id: str, analysis: dict[str, Any], task: str, chapter: int | None) -> list[dict[str, Any]]:
+    locations = analysis.get("prose_locations") if isinstance(analysis, dict) else []
+    if isinstance(locations, list) and locations:
+        return [dict(item) for item in locations if isinstance(item, dict)]
+    try:
+        from app.prose_locator import is_prose_refinement_intent, locate_prose_targets
+
+        if not is_prose_refinement_intent(analysis, task):
+            return []
+        return locate_prose_targets(
+            novel_id=novel_id,
+            chapter=chapter,
+            analysis=analysis,
+        )
+    except Exception:
+        return []
 
 
 def _file_ref(path: Path, *, role: str, target: str, chapter: int | None, analysis: dict[str, Any]) -> dict[str, Any]:

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.novel_context import normalize_novel_id
 from app.project_wiki import upsert_project_wiki_entry
+from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
 
 
 def chapter_material_entry_id(chapter: int | None, task: str = "prose") -> str:
@@ -29,6 +30,7 @@ def build_chapter_material_index(
     """
     nid = normalize_novel_id(novel_id)
     analysis = bundle.get("request_analysis") or {}
+    stage_profile = bundle.get("stage_profile") or analysis.get("stage_profile") or {}
     materials = bundle.get("materials") or {}
     outline = _target_outline(bundle, chapter)
     characters = _character_names(bundle, message, outline)
@@ -39,10 +41,15 @@ def build_chapter_material_index(
     style_rules = _external_style_rules(task)
     technique_brief = _technique_brief(bundle, message, outline)
     local_refs = _local_reference_pointers(materials)
+    prose_locations = _prose_locations(bundle, analysis)
+    target_prose = _target_prose_block(prose_locations)
     index = {
         "version": 1,
         "novel_id": nid,
+        "project_kind": bundle.get("project_kind") or "",
         "task": task,
+        "creative_stage": stage_profile.get("id") or analysis.get("creative_stage") or "",
+        "stage_profile": stage_profile,
         "chapter": chapter,
         "query": message,
         "external_packet": {
@@ -50,6 +57,7 @@ def build_chapter_material_index(
             "target_outline": outline,
             "history_summary": summaries,
             "characters": profiles,
+            "target_prose": target_prose,
             "techniques": technique_brief,
             "style_rules": style_rules,
         },
@@ -57,9 +65,11 @@ def build_chapter_material_index(
             "reference_pointers": local_refs,
             "intent": {
                 "task": analysis.get("task") or task,
+                "creative_stage": analysis.get("creative_stage") or stage_profile.get("id") or "",
                 "target_chapter": analysis.get("target_chapter") or chapter,
                 "affected_materials": analysis.get("affected_materials") or [],
                 "affected_files": analysis.get("affected_files") or [],
+                "prose_locations": prose_locations,
             },
         },
     }
@@ -69,17 +79,24 @@ def build_chapter_material_index(
 
 def format_provider_packet(index: dict[str, Any]) -> str:
     packet = index.get("external_packet") or {}
+    task = str(index.get("task") or "")
+    novel_planning = is_novel_planning_task(str(index.get("project_kind") or ""), task)
     parts = []
     if packet.get("target_outline"):
-        parts.append("### 1. 本章大纲\n" + packet["target_outline"])
+        title = "### 1. 目标结构材料" if novel_planning else "### 1. 本章大纲"
+        parts.append(title + "\n" + packet["target_outline"])
     if packet.get("history_summary"):
-        parts.append("### 2. 前文关联与伏笔\n" + packet["history_summary"])
+        title = "### 2. 已有连续性材料" if novel_planning else "### 2. 前文关联与伏笔"
+        parts.append(title + "\n" + packet["history_summary"])
     if packet.get("characters"):
-        parts.append("### 3. 本章相关人物\n" + packet["characters"])
+        title = "### 3. 相关人物材料" if novel_planning else "### 3. 本章相关人物"
+        parts.append(title + "\n" + packet["characters"])
+    if packet.get("target_prose"):
+        parts.append("### 4. 待改正文定位\n" + packet["target_prose"])
     if packet.get("techniques"):
-        parts.append("### 4. 参考技法\n" + packet["techniques"])
+        parts.append("### 5. 参考技法\n" + packet["techniques"])
     if packet.get("style_rules"):
-        parts.append("### 5. 写作边界\n" + packet["style_rules"])
+        parts.append("### 6. 写作边界\n" + packet["style_rules"])
     return "\n\n".join(parts)
 
 
@@ -230,6 +247,18 @@ def _character_names(bundle: dict[str, Any], message: str, outline: str) -> list
 
 
 def _external_style_rules(task: str) -> str:
+    if is_novel_planning_task("novel_strong", task):
+        profile = novel_stage_profile(task)
+        sections = "、".join(profile.get("material_sections") or [])
+        base = [
+            "只完成当前阶段的结构稿，不写正文成稿。",
+            "不得引入与用户目标和项目结构材料无关的新设定。",
+            "不要解释创作过程，不要列出本地资料来源。",
+            "输出必须可直接归档到对应结构文件，不混入修改建议、优化要点或过程说明。",
+        ]
+        if sections:
+            base.append(f"材料优先参考：{sections}。")
+        return "\n".join(f"- {item}" for item in base)
     base = [
         "只写当前章节/当前任务，不扩写全书设定。",
         "不得引入本章大纲和人物设定之外的新世界观。",
@@ -255,6 +284,45 @@ def _local_reference_pointers(materials: dict[str, Any]) -> list[dict[str, Any]]
                 "hint": _clip(item.get("text") or item.get("content") or item.get("excerpt") or "", 160),
             })
     return pointers
+
+
+def _prose_locations(bundle: dict[str, Any], analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    locations = bundle.get("prose_locations") or analysis.get("prose_locations") or []
+    if not isinstance(locations, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in locations:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        out.append({
+            "role": item.get("role") or "chapter_body",
+            "path": path,
+            "chapter": item.get("chapter"),
+            "start_line": item.get("start_line"),
+            "end_line": item.get("end_line"),
+            "match": item.get("match") or item.get("matched") or "",
+            "anchor": item.get("anchor") or item.get("matched") or "",
+            "score": item.get("score"),
+            "excerpt": _clip(item.get("excerpt") or "", 1000),
+        })
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _target_prose_block(locations: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for idx, loc in enumerate(locations[:5], start=1):
+        excerpt = _clip(_drop_local_source_notes(loc.get("excerpt") or ""), 900)
+        if not excerpt:
+            continue
+        start = loc.get("start_line") or "?"
+        end = loc.get("end_line") or "?"
+        lines.append(f"#### 片段 {idx}（第 {start}-{end} 行）\n{excerpt}")
+    return _clip("\n\n".join(lines), 3600)
 
 
 def _technique_brief(bundle: dict[str, Any], message: str, outline: str) -> str:

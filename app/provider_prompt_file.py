@@ -11,6 +11,7 @@ from app.project_paths import outputs_dir
 from app.project_kinds import SHORT_FILM_KIND
 from app.writing_sop import sop_for_task
 from app.writing_harness import check_request_text, estimate_budget
+from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
 
 # Provider 提问文件：把材料/规范/限制拼成"provider 可直接读"的完整中文 prompt，优先落盘到当前项目 输出/。
 # 与 material_bundle.json（程序读的结构化数据）不同，这是给千问/豆包/DeepSeek 直接阅读作答的提问包。
@@ -19,6 +20,11 @@ FALLBACK_OUTPUT_DIR = Path(os.getenv("WRITING_OUTPUT_DIR") or (WRITING_ROOT / "o
 
 # 各环节的任务说明（贴合 TASK_SPEC 的六类）。
 _NOVEL_TASK_BRIEF = {
+    "logline": "请产出小说【概念/基础设定】，包含项目一句话、类型基调、核心命题、主角欲望、阻碍和故事承诺。",
+    "brief": "请产出小说【概念/基础设定】，包含项目一句话、类型基调、核心命题、主角欲望、阻碍和故事承诺。",
+    "setting": "请产出小说【基础设定】，包含题材、类型基调、核心命题、创作约束和不可突破边界。",
+    "world": "请产出小说【世界观设定】，包含基本规则、时间线/空间规则、制度/禁忌和剧情约束。",
+    "worldview": "请产出小说【世界观设定】，包含基本规则、时间线/空间规则、制度/禁忌和剧情约束。",
     "prose": "请创作本章【正文】，4000-6000 字。",
     "character": "请设计【人物设定】（姓名/定位/性格/声音/处境）。",
     "outline": "请产出【大纲】要点（事件骨架/时间锚/章末钩子）。",
@@ -105,11 +111,27 @@ def _delivery_rules(project_kind: str, task: str) -> list[str]:
         if task == "logline":
             rules.append("概念任务应输出多项结构化剧本开发材料；除非用户明确要求，不要压缩为单句极短版本。")
         return rules
-    if task in {"prose", "expansion"}:
+    if task == "prose":
         return [
             "直接输出成品正文，不要解释过程。",
             "正文按章节叙事输出，字数 4000-6000。",
             "如需标注来源，只能使用外发材料名：[本章大纲]/[前情]/[人物设定]/[参考技法]。",
+        ]
+    if task in {"expansion", "fix"}:
+        return [
+            "只输出可替换/可插入的修订正文，不要解释过程。",
+            "必须围绕“待改正文定位”处理，不要重写整章。",
+            "不要标注 provider、五维、技法、源文档等来源标签。",
+        ]
+    if is_novel_planning_task(project_kind, task):
+        profile = novel_stage_profile(task)
+        signals = profile.get("acceptance_signals") or []
+        return [
+            f"阶段：{profile.get('label') or '小说前期规划'}（{profile.get('id') or 'planning'}）。",
+            "直接输出可归档的结构稿，不要解释过程。",
+            "不要写成章节正文，不要追加“修改建议”“优化要点”“本轮说明”。",
+            "不要标注 provider、五维、技法、源文档等来源标签。",
+            "建议覆盖：" + "、".join(signals) if signals else "按用户目标输出结构清晰的小说前期规划稿。",
         ]
     return [
         "直接输出可采用的成品内容，不要解释过程。",
@@ -148,6 +170,7 @@ def build_request_text(
         _project_label(bundle, chapter),
         "",
         "## 一、任务与交付",
+        f"- 类型：{brief}",
         f"- 任务：{task_sentence}",
         *(f"- 交付：{rule}" for rule in delivery_rules),
         "",

@@ -15,7 +15,8 @@
     "README.zh-CN.md",
     "requirements.txt",
     "TRADEMARKS.md",
-    "upgrade-manifest.json"
+    "upgrade-manifest.json",
+    "projects/writing/sop-definitions/"
   ],
   "preserve": [
     ".git/",
@@ -26,7 +27,12 @@
     "backups/",
     "data/",
     "logs/",
-    "projects/",
+    "projects/writing/novels/",
+    "projects/writing/outputs/",
+    "projects/writing/references/",
+    "projects/writing/data/",
+    "projects/writing/logs/",
+    "projects/writing/memory/",
     "tmp/"
   ],
   "notes": [

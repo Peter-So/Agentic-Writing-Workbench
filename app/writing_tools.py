@@ -74,7 +74,7 @@ def _rel(path: Path) -> str:
 
 
 def build_semantic_index(novel_id: str | None = None) -> dict[str, Any]:
-    script = NOVEL_ACQ_DIR / "semantic-search.py"
+    script = NOVEL_ACQ_DIR / "semantic_search.py"
     result = _run([_python(), str(script), "--build"], cwd=NOVEL_ACQ_DIR, timeout=180, novel_id=novel_id)
     index_path = NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl"
     return {
@@ -93,7 +93,7 @@ def search_references(query: str, dimension: str | None = None, top_k: int = 8,
 
     semantic_index = NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl"
     if semantic_index.exists():
-        script = NOVEL_ACQ_DIR / "semantic-search.py"
+        script = NOVEL_ACQ_DIR / "semantic_search.py"
         args = [_python(), str(script), query, "--top", str(top_k), "--json"]
         if dimension:
             args += ["--dim", dimension]
@@ -105,7 +105,7 @@ def search_references(query: str, dimension: str | None = None, top_k: int = 8,
             "index_ready": True,
         }
 
-    script = NOVEL_ACQ_DIR / "five-dim-search.py"
+    script = NOVEL_ACQ_DIR / "five_dim_search.py"
     args = [_python(), str(script), query, "--top", str(top_k), "--json"]
     if dimension:
         args += ["--dim", dimension]
@@ -272,6 +272,14 @@ def assess_material_health(bundle: dict[str, Any], *, task: str, chapter: int | 
     """
     materials = bundle.get("materials") or {}
     project_kind_value = bundle.get("project_kind") or ""
+    stage_profile: dict[str, Any] = {}
+    try:
+        from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
+
+        if is_novel_planning_task(project_kind_value, task) or task in {"prose", "expansion", "fix"}:
+            stage_profile = novel_stage_profile(task)
+    except Exception:
+        stage_profile = {}
     warnings: list[dict[str, Any]] = []
     signals = {
         "chapter_outline": bool(str(materials.get("chapter_outline") or "").strip()),
@@ -288,6 +296,12 @@ def assess_material_health(bundle: dict[str, Any], *, task: str, chapter: int | 
 
     reference_count = int(signals["semantic_results"]) + int(signals["five_dim_results"])
     if project_kind_value == "novel_strong":
+        if stage_profile and stage_profile.get("flow") != "full_generation" and not signals["project_docs"] and not signals["project_wiki_items"]:
+            warnings.append(_material_warning(
+                "missing_planning_structure_material",
+                f"当前为{stage_profile.get('label')}阶段，但未召回明确结构材料，将主要依赖用户输入生成前期规划稿。",
+                {"creative_stage": stage_profile.get("id"), "expected_sections": stage_profile.get("material_sections") or []},
+            ))
         if task in {"prose", "beat_sheet", "expansion", "fix"} and chapter and not signals["chapter_outline"]:
             warnings.append(_material_warning("missing_chapter_outline", "缺少目标章节大纲，正文/节拍会降级为用户请求与通用规则驱动。"))
         if task in {"prose", "beat_sheet", "character", "fix"} and not signals["character_profiles"]:
@@ -311,6 +325,9 @@ def assess_material_health(bundle: dict[str, Any], *, task: str, chapter: int | 
         "level": level,
         "warnings": warnings,
         "signals": signals,
+        "stage_profile": stage_profile,
+        "expected_material_sections": stage_profile.get("material_sections") if stage_profile else [],
+        "acceptance_signals": stage_profile.get("acceptance_signals") if stage_profile else [],
     }
 
 
@@ -486,6 +503,8 @@ def _novel_progress(novel_id: str, novel_path: Path) -> dict[str, Any]:
     completed = _confirmed_chapters(novel_id, novel_path)
     completed_max = max(completed) if completed else 0
     current = completed_max + 1 if outline_count == 0 or completed_max < outline_count else completed_max
+    stages = _novel_stage_progress(novel_id, completed_count=len(completed), outline_count=outline_count)
+    current_stage = next((item for item in stages if not item.get("done")), stages[-1] if stages else {})
     if outline_count and completed_max >= outline_count:
         label = f"已完成 {completed_max}/{outline_count} 章"
     else:
@@ -497,13 +516,49 @@ def _novel_progress(novel_id: str, novel_path: Path) -> dict[str, Any]:
         "completed_count": len(completed),
         "completed_max": completed_max,
         "current_chapter": current,
+        "current_stage_key": current_stage.get("key") or "prose",
+        "current_stage": current_stage.get("label") or "正文",
         "status_label": label,
+        "stages": stages,
         "items": [
+            {"label": "当前阶段", "value": current_stage.get("label") or "正文"},
             {"label": "大纲章节", "value": outline_count or "未识别", "unit": "章" if outline_count else ""},
             {"label": "正文完成", "value": completed_max or 0, "unit": "章"},
             {"label": "当前进度", "value": label, "wide": True},
         ],
     }
+
+
+def _novel_stage_progress(novel_id: str, *, completed_count: int, outline_count: int) -> list[dict[str, Any]]:
+    try:
+        from app.project_structure import resolve_structure_target
+        from app.writing_task_profiles import NOVEL_STAGE_PROFILES
+    except Exception:
+        return []
+    stages: list[dict[str, Any]] = []
+    for key in ["concept", "setting", "world", "character", "outline", "plot"]:
+        profile = NOVEL_STAGE_PROFILES.get(key) or {}
+        role = profile.get("structure_role")
+        _resolved_role, path = resolve_structure_target(novel_id, role, create_missing=False)
+        done = bool(path and _is_meaningful_file(path, placeholders=["待补充", "待定"], min_chars=120))
+        stages.append({
+            "key": key,
+            "label": profile.get("label") or key,
+            "task": profile.get("canonical_task") or "",
+            "role": role,
+            "done": done,
+            "path": _rel(path) if path and path.exists() else "",
+        })
+    stages.append({
+        "key": "prose",
+        "label": "正文",
+        "task": "prose",
+        "role": "chapter_body",
+        "done": bool(outline_count and completed_count >= outline_count),
+        "completed_count": completed_count,
+        "outline_count": outline_count,
+    })
+    return stages
 
 
 def _short_film_progress(novel_path: Path) -> dict[str, Any]:

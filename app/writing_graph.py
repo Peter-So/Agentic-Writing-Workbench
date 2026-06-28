@@ -23,6 +23,7 @@ from app.writing_memory import get_checkpointer
 from app.writing_model_review import model_review_cross, review_feedback_text
 from app.writing_need_audit import audit_need
 from app.writing_review_strategy import decide_review_strategy, deterministic_review
+from app.writing_task_profiles import is_novel_planning_task
 
 
 # 回环上限：审查不过最多回补材料重组 2 次（规范要求，防无限烧钱）。
@@ -36,7 +37,9 @@ KEEP_RECENT_MESSAGES = 6
 
 GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
     "__start__": "LangGraph 入口。",
-    "request_analyze": "使用 LLM 理解用户提问、项目类型、章节、目标文件与流程入口。",
+    "request_analyze": "使用 LLM 理解用户提问、项目类型、章节、目标文件与流程入口；保存 pending intent，并触发项目 Wiki 路由索引。",
+    "novel_stage_route": "小说项目专用：把 LLM 意图规范化为 creative_stage、task、flow_complexity 和 node_flow，区分规划精简流与正文完整流。",
+    "project_wiki_route": "LLM 意图分析后，把本轮 task、阶段、节点流、相关文件、正文行号和 pending intent 写入项目 Wiki 路由索引。",
     "compress_memory": "当上下文过长时压缩旧消息，保留可恢复的短期任务记忆。",
     "prepare_project": "检查项目类型与结构，必要时初始化项目规范目录。",
     "route_intent": "根据意图分析结果进入搜索、材料组装、审查、索引或创作分支。",
@@ -47,15 +50,19 @@ GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
     "draft_entry": "进入创作或改写分支。",
     "need_audit": "审计需求复杂度、材料依赖和流程风险。",
     "context_followup": "网页模型固定会话续问时复用上下文。",
-    "draft_assemble": "按项目 Wiki、章节、人物、前情、技法与限制精确组装材料。",
+    "material_profile": "按阶段 profile 切换材料范围：前期规划只取结构材料、Wiki 和技法；正文阶段补充大纲、前情、人物、风格、参考小说和连续性记忆。",
+    "draft_assemble": "按项目 Wiki、章节、人物、前情、技法与限制精确组装材料；生成材料索引，精修任务会携带正文文件行号与待改片段。",
     "prompt_refine": "把材料与目标整理成可执行的专业任务单。",
     "provider_route": "判断是否进入网页模型 provider 分支。",
     "provider_fanout": "调用已勾选网页 provider，收集外部候选内容。",
     "provider_confirm_gate": "等待用户确认或补充 provider 材料后再继续融合。",
     "generate": "调用创作模型生成或根据审查反馈重新生成。",
-    "pre_review": "规则预审，发现硬性问题时进入回环修复。",
+    "pre_review": "规则预审，发现硬性问题时进入回环修复；小说前期规划任务会轻量跳过，正文/扩写/修复执行完整预审。",
     "model_review": "审查模型评分与反馈，必要时触发重新生成。",
     "draft_finalize": "清洗定稿内容，准备用户确认与后续归档。",
+    "user_confirm": "用户确认采纳、拒绝或改写后采纳；确认后进入归档或项目产物保存闭环。",
+    "archive_write": "把确认稿写入章节正文、大纲、剧本、草稿或类型产物，并清理/归档 pending intent。",
+    "project_wiki_archive": "归档完成后，把归档文件、摘要、路由来源、相关文件和内容预览写入项目 Wiki 归档摘要。",
     "idea_settle": "随想项目在用户确认后沉淀为灵感、笔记或项目 Wiki 条目。",
     "visual_prompt": "电影脚本项目基于剧本、节拍与影像风格生成分镜/生图提示词。",
     "image_plan": "补齐镜头比例、分辨率、角色一致性和画面连续性参数。",
@@ -69,6 +76,8 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
     "__start__": "系统边界",
     "__end__": "系统边界",
     "request_analyze": "入口理解",
+    "novel_stage_route": "入口理解",
+    "project_wiki_route": "入口理解",
     "compress_memory": "入口理解",
     "prepare_project": "入口理解",
     "route_intent": "入口理解",
@@ -80,6 +89,7 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
     "need_audit": "创作主线",
     "context_followup": "创作主线",
     "draft_assemble": "创作主线",
+    "material_profile": "创作主线",
     "prompt_refine": "创作主线",
     "provider_route": "创作主线",
     "provider_fanout": "网页模型",
@@ -88,6 +98,9 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
     "pre_review": "审查回环",
     "model_review": "审查回环",
     "draft_finalize": "定稿确认",
+    "user_confirm": "定稿确认",
+    "archive_write": "定稿确认",
+    "project_wiki_archive": "定稿确认",
     "idea_settle": "定稿确认",
     "visual_prompt": "影像生图",
     "image_plan": "影像生图",
@@ -98,7 +111,10 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
 
 PROJECT_KIND_GRAPH_NOTES: dict[str, list[str]] = {
     "novel_strong": [
-        "小说项目默认走完整创作链路：意图分析、材料装配、生成、规则预审、模型审查、定稿确认。",
+        "小说项目先由 LLM 意图分析输出 creative_stage/task/flow_complexity/node_flow，再按阶段 profile 切换材料组装。",
+        "概念、基础设定、世界观、人物、情节属于 planning_light 精简流：不写正文，材料聚焦结构文件、项目 Wiki 和技法知识库，规则预审轻量跳过。",
+        "大纲属于 planning_archive 精简归档流：聚焦大纲、人物、世界观、情节和章节摘要，用户确认后进入显式归档。",
+        "正文、扩写、修复属于 full_generation 完整正文流：补充大纲、前情、人物、风格、参考小说、连续性记忆；fix/expansion 会携带正文文件行号和待改片段。",
         "章节正文、大纲、人物、设定等写回动作在用户确认后由归档流程执行，不在 LangGraph 内静默覆盖文件。",
     ],
     "short_film": [
@@ -112,10 +128,12 @@ PROJECT_KIND_GRAPH_NOTES: dict[str, list[str]] = {
 }
 
 
-GRAPH_CANVAS = {"width": 1420, "height": 1600}
+GRAPH_CANVAS = {"width": 1420, "height": 1700}
 GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
     "__start__": (660, 44),
     "request_analyze": (660, 140),
+    "novel_stage_route": (360, 236),
+    "project_wiki_route": (980, 140),
     "compress_memory": (660, 236),
     "prepare_project": (660, 332),
     "route_intent": (660, 428),
@@ -125,6 +143,7 @@ GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
     "search": (760, 548),
     "draft_entry": (1000, 548),
     "need_audit": (1000, 654),
+    "material_profile": (760, 760),
     "draft_assemble": (1000, 760),
     "prompt_refine": (1000, 866),
     "provider_route": (1000, 972),
@@ -134,7 +153,10 @@ GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
     "pre_review": (1200, 1194),
     "model_review": (1200, 1300),
     "draft_finalize": (1000, 1416),
-    "__end__": (660, 1532),
+    "user_confirm": (760, 1510),
+    "archive_write": (1000, 1588),
+    "project_wiki_archive": (1200, 1588),
+    "__end__": (660, 1648),
 }
 GRAPH_BASE_BANDS = [
     ["入口理解", 92, 476],
@@ -142,18 +164,35 @@ GRAPH_BASE_BANDS = [
     ["创作主线", 620, 1010],
     ["网页模型", 1050, 1232],
     ["审查回环", 1050, 1340],
-    ["定稿确认", 1378, 1570],
+    ["定稿确认", 1378, 1688],
 ]
 
 COMMON_GRAPH_NODE_IDS = {
     "__start__", "request_analyze", "compress_memory", "prepare_project", "route_intent", "__end__",
 }
 
+PROJECT_WIKI_FLOW_NODES = ["project_wiki_route", "user_confirm", "archive_write", "project_wiki_archive"]
+PROJECT_WIKI_FLOW_EDGES = [
+    {"source": "request_analyze", "target": "project_wiki_route", "label": "写路由索引", "conditional": False},
+    {"source": "project_wiki_route", "target": "compress_memory", "label": "", "conditional": False},
+    {"source": "draft_finalize", "target": "user_confirm", "label": "等待采纳", "conditional": True},
+    {"source": "user_confirm", "target": "archive_write", "label": "确认归档", "conditional": True},
+    {"source": "archive_write", "target": "project_wiki_archive", "label": "写归档摘要", "conditional": False},
+    {"source": "project_wiki_archive", "target": "__end__", "label": "", "conditional": False},
+]
+
+NOVEL_STAGE_FLOW_NODES = ["novel_stage_route", "material_profile"]
+NOVEL_STAGE_FLOW_EDGES = [
+    {"source": "request_analyze", "target": "novel_stage_route", "label": "阶段标识", "conditional": False},
+    {"source": "novel_stage_route", "target": "material_profile", "label": "材料策略", "conditional": False},
+    {"source": "material_profile", "target": "draft_assemble", "label": "按阶段裁剪", "conditional": False},
+]
+
 PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
     "novel_strong": {
         "visible": None,
-        "extra_nodes": [],
-        "extra_edges": [],
+        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, *NOVEL_STAGE_FLOW_NODES],
+        "extra_edges": [*PROJECT_WIKI_FLOW_EDGES, *NOVEL_STAGE_FLOW_EDGES],
         "layout": {},
         "group_bands": GRAPH_BASE_BANDS,
     },
@@ -163,8 +202,9 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "prompt_refine", "provider_route", "provider_fanout", "provider_confirm_gate",
             "generate", "pre_review", "model_review", "draft_finalize",
         },
-        "extra_nodes": ["visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
+        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, "visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
         "extra_edges": [
+            *PROJECT_WIKI_FLOW_EDGES,
             {"source": "draft_finalize", "target": "visual_prompt", "label": "需分镜/生图", "conditional": True},
             {"source": "visual_prompt", "target": "image_plan", "label": "", "conditional": False},
             {"source": "image_plan", "target": "image_generate", "label": "", "conditional": False},
@@ -176,6 +216,10 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "image_plan": (560, 1426),
             "image_generate": (760, 1488),
             "storyboard_archive": (980, 1532),
+            "user_confirm": (760, 1364),
+            "archive_write": (1010, 1430),
+            "project_wiki_archive": (1210, 1510),
+            "__end__": (660, 1648),
         },
         "group_bands": [
             ["入口理解", 92, 476],
@@ -183,6 +227,7 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             ["网页模型", 1050, 1232],
             ["审查回环", 1050, 1340],
             ["影像生图", 1278, 1570],
+            ["定稿确认", 1320, 1688],
         ],
     },
     "generic": {
@@ -190,8 +235,9 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "assemble", "search", "draft_entry", "need_audit", "draft_assemble",
             "prompt_refine", "provider_route", "generate", "model_review", "draft_finalize",
         },
-        "extra_nodes": ["idea_settle"],
+        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, "idea_settle"],
         "extra_edges": [
+            *PROJECT_WIKI_FLOW_EDGES,
             {"source": "generate", "target": "model_review", "label": "轻量审查", "conditional": False},
             {"source": "draft_finalize", "target": "idea_settle", "label": "采纳后沉淀", "conditional": True},
             {"source": "idea_settle", "target": "__end__", "label": "", "conditional": False},
@@ -208,13 +254,16 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "model_review": (900, 1194),
             "draft_finalize": (900, 1300),
             "idea_settle": (900, 1416),
-            "__end__": (660, 1532),
+            "user_confirm": (660, 1416),
+            "archive_write": (900, 1510),
+            "project_wiki_archive": (1120, 1510),
+            "__end__": (660, 1648),
         },
         "group_bands": [
             ["入口理解", 92, 476],
             ["灵感材料", 508, 592],
             ["随想成稿", 620, 1242],
-            ["确认沉淀", 1268, 1570],
+            ["确认沉淀", 1268, 1688],
         ],
     },
 }
@@ -487,7 +536,32 @@ def node_request_analyze(state: WritingState) -> WritingState:
                 task=task,
                 chapter=chapter,
                 error=f"{type(exc).__name__}: {exc}",
+                project_kind=kind,
+                project_progress=progress,
+                novel_id=state.get("novel_id"),
             )
+    try:
+        from app.project_kinds import STRONG_NOVEL_KIND
+        from app.prose_locator import is_prose_refinement_intent, locate_prose_targets
+
+        if kind == STRONG_NOVEL_KIND and not analysis.get("prose_locations") and is_prose_refinement_intent(analysis, analysis.get("task") or task):
+            prose_locations = locate_prose_targets(
+                novel_id=state.get("novel_id"),
+                chapter=analysis.get("target_chapter") or chapter,
+                analysis=analysis,
+                message=message,
+            )
+            if prose_locations:
+                analysis = dict(analysis)
+                analysis["prose_locations"] = prose_locations
+                affected = list(analysis.get("affected_files") or [])
+                for loc in prose_locations:
+                    path = loc.get("path")
+                    if path and path not in affected:
+                        affected.append(path)
+                analysis["affected_files"] = affected[:10]
+    except Exception:
+        pass
     actions.append(
         "request_analyze("
         f"{analysis.get('source')},{analysis.get('deliverable')},{analysis.get('target_chapter')})"
@@ -510,6 +584,22 @@ def node_request_analyze(state: WritingState) -> WritingState:
     except Exception as exc:
         pending_intent = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         actions.append("pending_intent_save_failed")
+    try:
+        from app.project_wiki_events import record_request_route_index
+
+        route_wiki = record_request_route_index(
+            novel_id=state.get("novel_id"),
+            invocation_id=state.get("invocation_id", ""),
+            track=state.get("track", "create"),
+            message=message,
+            analysis=analysis,
+            pending_intent=pending_intent,
+            project_kind=kind,
+        )
+        if route_wiki.get("ok"):
+            actions.append("project_wiki_route_index")
+    except Exception as exc:
+        actions.append(f"project_wiki_route_failed({type(exc).__name__})")
     updates: WritingState = {"request_analysis": analysis, "actions": actions}
     if pending_intent:
         updates["pending_intent"] = pending_intent
@@ -765,6 +855,8 @@ def node_provider_confirm_gate(state: WritingState) -> WritingState:
             "need_audit": state.get("need_audit") or {},
             "material_health": (state.get("bundle") or {}).get("material_health") or {},
             "request_analysis": state.get("request_analysis") or {},
+            "stage_profile": (state.get("bundle") or {}).get("stage_profile") or (state.get("request_analysis") or {}).get("stage_profile") or {},
+            "prose_locations": (state.get("bundle") or {}).get("prose_locations") or (state.get("request_analysis") or {}).get("prose_locations") or [],
             "pending_intent": state.get("pending_intent") or {},
             "invocation_id": state.get("invocation_id", ""),
             "workflow_sop": state.get("workflow_sop") or (state.get("bundle") or {}).get("workflow_sop") or {},
@@ -850,6 +942,10 @@ def node_draft_assemble(state: WritingState) -> WritingState:
     bundle["task"] = task
     bundle["request_analysis"] = analysis
     bundle["chapter"] = chapter
+    if analysis.get("prose_locations"):
+        bundle["prose_locations"] = analysis.get("prose_locations") or []
+    if analysis.get("stage_profile"):
+        bundle["stage_profile"] = analysis.get("stage_profile")
     workflow_sop = sop_for_task(bundle.get("project_kind"), task)
     bundle["workflow_sop"] = workflow_sop
     bundle["model_preferences"] = state.get("model_preferences") or {}
@@ -870,6 +966,12 @@ def node_draft_assemble(state: WritingState) -> WritingState:
             materials["outline_context"] = outline_context
             bundle["materials"] = materials
             actions.append(f"outline_context({','.join(str(ch) for ch in context_chapters)})")
+
+    if analysis.get("prose_locations"):
+        materials = bundle.get("materials") or {}
+        materials["target_prose_locations"] = analysis.get("prose_locations") or []
+        bundle["materials"] = materials
+        actions.append(f"prose_located({len(analysis.get('prose_locations') or [])})")
 
     # 跨章节进展记忆：仅章节环节、且非首章时注入；按关联性裁剪（相邻+强关联）。
     if task in {"beat_sheet", "prose", "expansion", "fix"} and chapter and chapter > 1:
@@ -1214,6 +1316,10 @@ def _merge_provider_outputs(bundle: dict, answers: list[dict], actions: list[str
 
 
 def node_pre_review(state: WritingState) -> WritingState:
+    if is_novel_planning_task(state.get("project_kind"), state.get("task")):
+        actions = list(state.get("actions") or [])
+        actions.append("pre_review_skipped(novel_planning)")
+        return {"pre_review": {"ok": True, "passed": True, "blocking_count": 0, "issues": []}, "actions": actions}
     if state.get("project_kind") in {"short_film", "generic"}:
         actions = list(state.get("actions") or [])
         actions.append("pre_review_skipped(generic)")
@@ -1354,6 +1460,7 @@ def node_draft_finalize(state: WritingState) -> WritingState:
             "need_audit": state.get("need_audit") or {},
             "material_health": (state.get("bundle") or {}).get("material_health") or {},
             "request_analysis": state.get("request_analysis") or {},
+            "prose_locations": (state.get("bundle") or {}).get("prose_locations") or (state.get("request_analysis") or {}).get("prose_locations") or [],
             "pending_intent": state.get("pending_intent") or {},
             "provider_answers": state.get("provider_answers") or [],
             "artifacts": artifacts,
@@ -1585,11 +1692,17 @@ def graph_visualization(project_kind: str = "generic") -> dict[str, Any]:
             "route_intent": "意图路由",
             "compress_memory": "记忆压缩",
             "prepare_project": "项目准备",
+            "novel_stage_route": "阶段标识",
+            "project_wiki_route": "Wiki路由索引",
             "build_index": "构建索引",
             "review": "章节审查",
             "assemble": "材料组装",
             "search": "参考检索",
             "draft_entry": "创作入口",
+            "material_profile": "材料策略切换",
+            "user_confirm": "用户确认",
+            "archive_write": "归档写回",
+            "project_wiki_archive": "Wiki归档摘要",
             "idea_settle": "灵感沉淀",
             "visual_prompt": "分镜提示词",
             "image_plan": "生图参数",

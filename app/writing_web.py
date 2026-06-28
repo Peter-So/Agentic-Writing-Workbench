@@ -422,6 +422,25 @@ def _complete_pending_after_archive(novel_id: str, track: str, invocation_id: st
         pass
 
 
+def _recover_archive_request_analysis(novel_id: str, track: str, invocation_id: str = "") -> dict[str, Any]:
+    try:
+        from app.pending_intent_memory import recover_pending_intent
+
+        recovered = recover_pending_intent(
+            novel_id=novel_id,
+            track=track,
+            invocation_id=invocation_id,
+        )
+        if isinstance(recovered, dict):
+            analysis = dict(recovered.get("analysis") or {})
+            if recovered.get("related_files") and not analysis.get("related_files"):
+                analysis["related_files"] = recovered.get("related_files")
+            return analysis
+    except Exception:
+        pass
+    return {}
+
+
 def _cleanup_after_success(novel_id: str, task_scope: str) -> dict[str, Any]:
     try:
         from app.writing_cleanup import cleanup_after_task
@@ -439,8 +458,27 @@ def _record_archive_result(
     task: str,
     chapter: int | None,
     result: dict[str, Any],
+    request_analysis: dict[str, Any] | None = None,
+    content: str = "",
 ) -> None:
     try:
+        try:
+            from app.project_wiki_events import record_archive_summary
+
+            wiki_result = record_archive_summary(
+                novel_id=novel_id,
+                invocation_id=invocation_id,
+                track=track,
+                task=task,
+                chapter=chapter,
+                result=result,
+                request_analysis=request_analysis or {},
+                content=content,
+            )
+            if wiki_result.get("ok"):
+                result["project_wiki_archive"] = wiki_result.get("entry") or {}
+        except Exception as exc:
+            result["project_wiki_archive"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         if invocation_id:
             try:
                 from app.writing_invocations import finish_invocation, invocation_rel_path
@@ -1904,19 +1942,7 @@ def archive_chapter_endpoint(req: ArchiveChapterRequest) -> dict[str, Any]:
     """显式留档：把确认的正文写入 chapter-NN-*.md 并标记完成状态（破坏性写入需 overwrite）。"""
     from app.confirm_writeback import archive_chapter, resolve_chapter_archive_title
 
-    request_analysis: dict[str, Any] = {}
-    try:
-        from app.pending_intent_memory import recover_pending_intent
-
-        recovered = recover_pending_intent(
-            novel_id=req.novel_id,
-            track=req.track,
-            invocation_id=req.invocation_id,
-        )
-        if isinstance(recovered, dict):
-            request_analysis = dict(recovered.get("analysis") or {})
-    except Exception:
-        request_analysis = {}
+    request_analysis = _recover_archive_request_analysis(req.novel_id, req.track, req.invocation_id)
     title_resolution = resolve_chapter_archive_title(req.chapter, req.novel_id, request_analysis)
     result = archive_chapter(
         req.chapter,
@@ -1937,6 +1963,8 @@ def archive_chapter_endpoint(req: ArchiveChapterRequest) -> dict[str, Any]:
             task="prose",
             chapter=req.chapter,
             result=result,
+            request_analysis=request_analysis,
+            content=req.content,
         )
         result["cleanup"] = _cleanup_after_success(req.novel_id, "archive_chapter")
     return result
@@ -1946,6 +1974,7 @@ def archive_chapter_endpoint(req: ArchiveChapterRequest) -> dict[str, Any]:
 def archive_artifact_endpoint(req: ArchiveArtifactRequest) -> dict[str, Any]:
     """显式保存非小说章节项目产物，如 002 的剧本、分镜、角色表。"""
     from app.project_artifacts import save_artifact
+    request_analysis = _recover_archive_request_analysis(req.novel_id, req.track, req.invocation_id)
     result = save_artifact(req.task, req.content, novel_id=req.novel_id, overwrite=req.overwrite, track=req.track)
     if result.get("ok"):
         _complete_pending_after_archive(req.novel_id, req.track, req.invocation_id)
@@ -1956,6 +1985,8 @@ def archive_artifact_endpoint(req: ArchiveArtifactRequest) -> dict[str, Any]:
             task=req.task,
             chapter=None,
             result=result,
+            request_analysis=request_analysis,
+            content=req.content,
         )
         result["cleanup"] = _cleanup_after_success(req.novel_id, "archive_artifact")
     return result
@@ -1966,6 +1997,7 @@ def archive_outline_endpoint(req: ArchiveOutlineRequest) -> dict[str, Any]:
     """显式写回小说大纲的某一章段落；需先确认采纳，再二次确认覆盖。"""
     from app.outline_writeback import archive_outline_chapter
 
+    request_analysis = _recover_archive_request_analysis(req.novel_id, req.track, req.invocation_id)
     result = archive_outline_chapter(
         novel_id=req.novel_id,
         chapter=req.chapter,
@@ -1982,6 +2014,8 @@ def archive_outline_endpoint(req: ArchiveOutlineRequest) -> dict[str, Any]:
             task="outline",
             chapter=req.chapter,
             result=result,
+            request_analysis=request_analysis,
+            content=req.content,
         )
         result["cleanup"] = _cleanup_after_success(req.novel_id, "archive_outline")
     return result
@@ -2382,9 +2416,17 @@ def _ready_chat_model(preferred: str = "gpt") -> str:
     return resolve_text_model(cfg, "chat", preferred or None)
 
 
+def _required_message_text(message: str, *, action: str = "提交") -> str:
+    text = str(message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail=f"请输入内容后再{action}。")
+    return text
+
+
 @app.post("/api/writing/plain-chat")
 def plain_chat(req: PlainChatRequest) -> dict[str, Any]:
     """Pure chat: no LangGraph nodes, no material assembly, no project writeback."""
+    message = _required_message_text(req.message, action="聊天")
     try:
         model_key = _ready_chat_model(req.model_key or req.model_preferences.get("chat", ""))
         cfg = load_runtime_config()
@@ -2394,7 +2436,7 @@ def plain_chat(req: PlainChatRequest) -> dict[str, Any]:
                 "role": "system",
                 "content": "你是一个中文写作项目里的普通聊天助手。直接回答用户问题，不进入创作流程，不修改项目文件。",
             },
-            {"role": "human", "content": req.message},
+            {"role": "human", "content": message},
         ])
         text = (getattr(resp, "content", "") or "").strip()
         return {"ok": bool(text), "answer": text, "model": model_key, "novel_id": normalize_novel_id(req.novel_id)}
@@ -2405,17 +2447,18 @@ def plain_chat(req: PlainChatRequest) -> dict[str, Any]:
 @app.post("/api/writing/chat", response_model=WritingChatResponse)
 def chat(req: WritingChatRequest) -> WritingChatResponse:
     agent = WritingAgent()
+    message = "" if req.mode == "build_index" else _required_message_text(req.message, action="提交")
     # 创作产出类请求：若用户在消息中明确要求修改/调整该类问题，重置其干预偏好（回到学习）。
     policy_reset = False
     if req.mode in {"draft", "revise"}:
         try:
             from app.intervene_policy import maybe_reset_on_message
-            policy_reset = maybe_reset_on_message(req.track, req.task, req.message)
+            policy_reset = maybe_reset_on_message(req.track, req.task, message)
         except Exception:
             pass
     try:
         result = agent.run(
-            message=req.message,
+            message=message,
             mode=req.mode,
             chapter=req.chapter,
             task=req.task,
@@ -2457,23 +2500,23 @@ def draft_stream(req: WritingChatRequest) -> StreamingResponse:
     """创作产出（draft/revise）流式：SSE 逐字推送融合/生成 token + 节点进度 + 终态。"""
     from app.writing_stream import stream_draft
 
+    message = _required_message_text(req.message, action="创作")
     # 用户对该类问题要求修改 → 重置干预偏好（与 /chat 一致）。
     if req.mode in {"draft", "revise"}:
         try:
             from app.intervene_policy import maybe_reset_on_message
-            maybe_reset_on_message(req.track, req.task, req.message)
+            maybe_reset_on_message(req.track, req.task, message)
         except Exception:
             pass
     inputs = {
-        "user_message": req.message, "mode": req.mode, "chapter": req.chapter,
+        "user_message": message, "mode": req.mode, "chapter": req.chapter,
         "task": req.task, "dimension": req.dimension, "top_k": req.top_k,
         "login_confirmed": req.login_confirmed, "use_provider_source": req.use_provider_source,
         "skip_material_assemble": req.skip_material_assemble,
         "track": req.track, "novel_id": req.novel_id,
         "model_preferences": req.model_preferences,
     }
-    if req.message:
-        inputs["messages"] = [{"role": "user", "content": req.message}]
+    inputs["messages"] = [{"role": "user", "content": message}]
     return StreamingResponse(stream_draft(inputs, track=req.track, novel_id=req.novel_id),
                              media_type="text/event-stream")
 

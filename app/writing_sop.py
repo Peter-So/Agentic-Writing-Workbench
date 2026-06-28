@@ -10,8 +10,8 @@ from app.project_kinds import DEFAULT_KIND, SHORT_FILM_KIND, STRONG_NOVEL_KIND
 SOP_ROOT = WRITING_ROOT / "sop-definitions"
 
 _SOP_FILE_BY_KIND = {
-    STRONG_NOVEL_KIND: "novel-strong.yaml",
-    SHORT_FILM_KIND: "short-film.yaml",
+    STRONG_NOVEL_KIND: "novel_strong.yaml",
+    SHORT_FILM_KIND: "short_film.yaml",
     DEFAULT_KIND: "generic.yaml",
 }
 
@@ -26,6 +26,13 @@ def sop_for_task(project_kind: str | None, task: str | None) -> dict[str, Any]:
     sop = load_sop(kind)
     tasks = sop.get("tasks") or {}
     task_key = task or "draft"
+    if kind == STRONG_NOVEL_KIND:
+        try:
+            from app.writing_task_profiles import normalize_novel_task
+
+            task_key = normalize_novel_task(task_key) or task_key
+        except Exception:
+            pass
     task_sop = dict(tasks.get(task_key) or tasks.get("draft") or tasks.get("outline") or {})
     role_key = task_sop.get("role") or ""
     role = dict((sop.get("roles") or {}).get(role_key) or {})
