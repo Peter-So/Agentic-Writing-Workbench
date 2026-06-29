@@ -137,6 +137,20 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
             if (text or "").strip():
                 parts.append(f"### 项目文档：{name}\n[源文档·{name}]\n{str(text)[:3000]}")
 
+    project_assets = materials.get("project_assets") or {}
+    asset_excerpts = materials.get("project_asset_excerpts") or project_assets.get("text_excerpts") or []
+    if asset_excerpts:
+        lines = ["### 当前项目资产/参考材料（只读材料）"]
+        for item in asset_excerpts[:6]:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or ""
+            text = (item.get("text") or "").strip()
+            if path and text:
+                lines.append(f"[项目资产·{path}]\n{text[:900]}")
+        if len(lines) > 1:
+            parts.append("\n\n".join(lines))
+
     semantic = materials.get("semantic_results") or []
     if semantic:
         lines = ["### 五维资料库·语义检索（机制来源，提取机制勿抄内容）"]

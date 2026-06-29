@@ -58,6 +58,7 @@ def build_chapter_material_index(
             "history_summary": summaries,
             "characters": profiles,
             "target_prose": target_prose,
+            "project_assets": _project_assets_block(materials),
             "techniques": technique_brief,
             "style_rules": style_rules,
         },
@@ -93,10 +94,12 @@ def format_provider_packet(index: dict[str, Any]) -> str:
         parts.append(title + "\n" + packet["characters"])
     if packet.get("target_prose"):
         parts.append("### 4. 待改正文定位\n" + packet["target_prose"])
+    if packet.get("project_assets"):
+        parts.append("### 5. 当前项目资产与参考材料\n" + packet["project_assets"])
     if packet.get("techniques"):
-        parts.append("### 5. 参考技法\n" + packet["techniques"])
+        parts.append("### 6. 参考技法\n" + packet["techniques"])
     if packet.get("style_rules"):
-        parts.append("### 6. 写作边界\n" + packet["style_rules"])
+        parts.append("### 7. 写作边界\n" + packet["style_rules"])
     return "\n\n".join(parts)
 
 
@@ -284,6 +287,32 @@ def _local_reference_pointers(materials: dict[str, Any]) -> list[dict[str, Any]]
                 "hint": _clip(item.get("text") or item.get("content") or item.get("excerpt") or "", 160),
             })
     return pointers
+
+
+def _project_assets_block(materials: dict[str, Any]) -> str:
+    assets = materials.get("project_assets") or {}
+    excerpts = materials.get("project_asset_excerpts") or assets.get("text_excerpts") or []
+    files = assets.get("files") or []
+    lines: list[str] = []
+    for item in excerpts[:6]:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path") or ""
+        text = _clip(item.get("text") or "", 900)
+        if path and text:
+            lines.append(f"#### {path}\n{text}")
+    if files:
+        listed = []
+        for item in files[:8]:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or ""
+            kind = item.get("kind") or "file"
+            if path:
+                listed.append(f"- [{kind}] {path}")
+        if listed:
+            lines.append("#### 可用资产清单\n" + "\n".join(listed))
+    return _clip("\n\n".join(lines), 5000)
 
 
 def _prose_locations(bundle: dict[str, Any], analysis: dict[str, Any]) -> list[dict[str, Any]]:

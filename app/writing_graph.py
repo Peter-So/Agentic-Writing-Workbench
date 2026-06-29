@@ -23,7 +23,7 @@ from app.writing_memory import get_checkpointer
 from app.writing_model_review import model_review_cross, review_feedback_text
 from app.writing_need_audit import audit_need
 from app.writing_review_strategy import decide_review_strategy, deterministic_review
-from app.writing_task_profiles import is_novel_planning_task
+from app.writing_task_profiles import apply_stage_material_profile, is_novel_planning_task
 
 
 # 回环上限：审查不过最多回补材料重组 2 次（规范要求，防无限烧钱）。
@@ -1040,6 +1040,44 @@ def node_draft_assemble(state: WritingState) -> WritingState:
     except Exception:
         pass
 
+    # 当前项目资产/参考材料：只在创作流材料组装后注入，不影响普通聊天。
+    try:
+        project_assets = writing_tools.collect_project_assets(
+            state.get("novel_id"),
+            query=assembly_query or message,
+            limit=12,
+        )
+        if project_assets.get("files") or project_assets.get("text_excerpts"):
+            materials = bundle.get("materials") or {}
+            materials["project_assets"] = project_assets
+            if project_assets.get("text_excerpts"):
+                materials["project_asset_excerpts"] = project_assets.get("text_excerpts") or []
+            bundle["materials"] = materials
+            actions.append(
+                "project_assets("
+                f"{len(project_assets.get('files') or [])},"
+                f"{len(project_assets.get('text_excerpts') or [])})"
+            )
+    except Exception as exc:
+        actions.append(f"project_assets_failed({type(exc).__name__})")
+
+    try:
+        bundle, material_profile = apply_stage_material_profile(
+            bundle,
+            analysis=analysis,
+            project_kind=bundle.get("project_kind") or state.get("project_kind"),
+            task=task,
+        )
+        if material_profile.get("applied"):
+            actions.append(
+                "material_profile("
+                f"{material_profile.get('stage')},"
+                f"removed={len(material_profile.get('removed') or [])})"
+            )
+    except Exception as exc:
+        bundle["material_profile"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        actions.append(f"material_profile_failed({type(exc).__name__})")
+
     try:
         material_health = writing_tools.assess_material_health(bundle, task=task, chapter=chapter)
         bundle["material_health"] = material_health
@@ -1076,6 +1114,10 @@ def node_draft_assemble(state: WritingState) -> WritingState:
     except Exception:
         bundle["request_text"] = message
         rf_path = ""
+    try:
+        writing_tools.rewrite_material_bundle_output(data, bundle)
+    except Exception:
+        pass
     return {
         "bundle": bundle,
         "chapter": chapter,

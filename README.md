@@ -99,6 +99,7 @@ projects/writing/short-film-skill-suite/
 projects/writing/novel-acquisition/
 scripts/validate-writing-project.py
 scripts/upgrade-to-latest.py
+scripts/publish-release.py
 ```
 
 The clean export does not include private keys, provider sessions, browser profiles, reference novels, Chroma data, task logs, generated outputs, or project-specific content.
@@ -161,6 +162,22 @@ backups/
 Each real upgrade creates `backups/upgrades/<timestamp>/backup-manifest.json` and stores previous copies of changed framework files so rollback can restore them.
 
 If a framework-file copy fails during upgrade, the upgrader attempts to rollback the files touched in that upgrade before reporting failure. Web upgrades also restart after a successful upgrade or a rollback.
+
+## Publish A Release
+
+Maintainers can publish a GitHub Release from the current clean `main` branch:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\publish-release.py v0.1.5
+```
+
+The script checks that `CHANGE.md` contains the requested version section, refuses duplicate local or remote tags, pushes `main`, creates `Agentic-Writing-Workbench-v<version>`, and publishes the GitHub Release with notes extracted from `CHANGE.md`.
+
+Preview without pushing:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\publish-release.py v0.1.5 --dry-run
+```
 
 ## Configuration
 

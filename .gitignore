@@ -14,6 +14,7 @@ projects/*/.env.local
 backups/
 logs/
 tmp/
+.release-notes/
 data/app-upgrade-status.json
 data/browser-profiles/*
 !data/browser-profiles/.gitkeep

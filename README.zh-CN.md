@@ -99,6 +99,7 @@ projects/writing/short-film-skill-suite/
 projects/writing/novel-acquisition/
 scripts/validate-writing-project.py
 scripts/upgrade-to-latest.py
+scripts/publish-release.py
 ```
 
 干净发布版不包含私有密钥、provider 会话、浏览器资料、参考小说原文、Chroma 数据、任务日志、生成产物或项目私有内容。
@@ -161,6 +162,22 @@ backups/
 每次真实升级都会创建 `backups/upgrades/<timestamp>/backup-manifest.json`，并保存被覆盖框架文件的旧版本，回滚时只按该清单还原本次升级触碰过的文件。
 
 如果升级过程中复制框架文件失败，升级器会尝试按本次备份清单自动回滚后再报告失败。Web 端升级成功或失败回滚后都会协调服务重启。
+
+## 发布 Release
+
+维护者可以从干净的 `main` 分支发布 GitHub Release：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\publish-release.py v0.1.5
+```
+
+脚本会检查 `CHANGE.md` 是否存在对应版本段，拒绝重复的本地或远端 tag，推送 `main`，创建 `Agentic-Writing-Workbench-v<version>`，并把 `CHANGE.md` 中对应版本段作为 GitHub Release 说明。
+
+只预览不推送：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\publish-release.py v0.1.5 --dry-run
+```
 
 ## 配置
 

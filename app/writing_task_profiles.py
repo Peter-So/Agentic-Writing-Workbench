@@ -182,6 +182,189 @@ def enrich_novel_stage_analysis(
     return enriched
 
 
+def apply_stage_material_profile(
+    bundle: dict[str, Any],
+    *,
+    analysis: dict[str, Any] | None = None,
+    project_kind: str | None,
+    task: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prune assembled materials according to the novel stage profile.
+
+    The stage profile is the single source of truth for which material sections
+    may enter the creative prompt. This prevents early-stage tasks such as
+    concept/world/character from being polluted by full prose/reference material.
+    """
+    if project_kind != STRONG_NOVEL_KIND:
+        return bundle, {"ok": True, "applied": False, "reason": "non_novel_project"}
+    profile = _profile_from_bundle(bundle, analysis, task)
+    if not profile:
+        return bundle, {"ok": True, "applied": False, "reason": "missing_stage_profile"}
+    allowed = set(str(item) for item in (profile.get("material_sections") or []) if str(item).strip())
+    if not allowed:
+        return bundle, {"ok": True, "applied": False, "reason": "empty_material_sections", "stage": profile.get("id", "")}
+
+    filtered = dict(bundle or {})
+    materials = dict(filtered.get("materials") or {})
+    removed: list[str] = []
+    kept: list[str] = []
+
+    def allow(*sections: str) -> bool:
+        return any(section in allowed for section in sections)
+
+    direct_roles = {
+        "chapter_outline": ("outline",),
+        "outline_context": ("outline",),
+        "character_profiles": ("character",),
+        "worldbuilding": ("worldview",),
+        "plot_notes": ("plot",),
+        "semantic_results": ("reference_novels",),
+        "five_dim_results": ("reference_novels",),
+        "source_doc_excerpts": ("references", "reference_novels"),
+        "project_assets": ("references", "reference_novels"),
+        "project_asset_excerpts": ("references", "reference_novels"),
+    }
+    for key, sections in direct_roles.items():
+        if key not in materials:
+            continue
+        if allow(*sections):
+            kept.append(key)
+        else:
+            materials.pop(key, None)
+            removed.append(key)
+
+    if "constraints" in materials:
+        if allow("base_setting", "worldview", "style_guide"):
+            kept.append("constraints")
+        else:
+            materials.pop("constraints", None)
+            removed.append("constraints")
+
+    project_docs = materials.get("project_docs")
+    if isinstance(project_docs, dict):
+        filtered_docs = {}
+        for name, text in project_docs.items():
+            role = _project_doc_role(name)
+            if role in allowed:
+                filtered_docs[name] = text
+        if filtered_docs:
+            materials["project_docs"] = filtered_docs
+            kept.append(f"project_docs:{len(filtered_docs)}")
+        else:
+            materials.pop("project_docs", None)
+        removed_count = len(project_docs) - len(filtered_docs)
+        if removed_count > 0:
+            removed.append(f"project_docs:{removed_count}")
+
+    top_level_roles = {
+        "cross_chapter": ("chapter_summary",),
+        "output_recall": ("chapter_summary",),
+        "wiki_items": ("project_wiki",),
+        "project_wiki_items": ("project_wiki",),
+        "technique_context": ("writing_techniques",),
+        "reference_retrieval": ("reference_novels",),
+    }
+    for key, sections in top_level_roles.items():
+        if key not in filtered:
+            continue
+        if allow(*sections):
+            kept.append(key)
+        else:
+            filtered.pop(key, None)
+            removed.append(key)
+
+    if "long_term_settings" in filtered:
+        if allow("base_setting", "character", "worldview", "style_guide"):
+            kept.append("long_term_settings")
+        else:
+            filtered.pop("long_term_settings", None)
+            removed.append("long_term_settings")
+
+    if materials.get("target_prose_locations") and str(profile.get("id") or "") != "prose":
+        materials.pop("target_prose_locations", None)
+        removed.append("target_prose_locations")
+    elif materials.get("target_prose_locations"):
+        kept.append("target_prose_locations")
+    if filtered.get("prose_locations") and str(profile.get("id") or "") != "prose":
+        filtered.pop("prose_locations", None)
+        removed.append("prose_locations")
+    elif filtered.get("prose_locations"):
+        kept.append("prose_locations")
+
+    report = {
+        "ok": True,
+        "applied": True,
+        "stage": profile.get("id") or "",
+        "stage_label": profile.get("label") or "",
+        "flow": profile.get("flow") or "",
+        "allowed_sections": sorted(allowed),
+        "kept": kept,
+        "removed": removed,
+    }
+    filtered["materials"] = materials
+    filtered["stage_profile"] = profile
+    filtered["material_profile"] = report
+    return filtered, report
+
+
+def _profile_from_bundle(bundle: dict[str, Any], analysis: dict[str, Any] | None, task: str | None) -> dict[str, Any]:
+    for candidate in (
+        (analysis or {}).get("stage_profile"),
+        (bundle or {}).get("stage_profile"),
+        novel_stage_profile((analysis or {}).get("task") or task),
+    ):
+        if isinstance(candidate, dict) and candidate.get("id"):
+            profile = dict(candidate)
+            profile["material_sections"] = list(profile.get("material_sections") or [])
+            return profile
+    return {}
+
+
+def _project_doc_role(name: str) -> str:
+    text = str(name or "").replace("\\", "/").strip()
+    if text.startswith("role:"):
+        return _normalize_material_role(text.split(":", 1)[1].strip())
+    lowered = text.lower()
+    if "世界观" in text or "world" in lowered:
+        return "worldview"
+    if "基础设定" in text or "brief" in lowered or "logline" in lowered:
+        return "base_setting"
+    if "人物" in text or "character" in lowered:
+        return "character"
+    if "情节" in text or "剧情" in text or "beat" in lowered or "plot" in lowered:
+        return "plot"
+    if "大纲" in text or "outline" in lowered:
+        return "outline"
+    if "摘要" in text or "summary" in lowered or "memory" in lowered:
+        return "chapter_summary"
+    if "风格" in text or "style" in lowered:
+        return "style_guide"
+    if "wiki" in lowered or "维基" in text:
+        return "project_wiki"
+    if "技能" in text or "skill" in lowered or "lesson" in lowered:
+        return "writing_techniques"
+    if "参考" in text or "素材" in text or "reference" in lowered:
+        return "references"
+    return ""
+
+
+def _normalize_material_role(role: str) -> str:
+    return {
+        "brief": "base_setting",
+        "concept": "base_setting",
+        "settings": "base_setting",
+        "ideas": "plot",
+        "beat_sheet": "plot",
+        "chapter_status": "chapter_summary",
+        "narrative_rules": "style_guide",
+        "style": "style_guide",
+        "wiki": "project_wiki",
+        "skills": "writing_techniques",
+        "references": "references",
+        "reference": "references",
+    }.get(str(role or "").strip(), str(role or "").strip())
+
+
 def _stage_conflict(stage_id: str, progress: dict[str, Any]) -> dict[str, Any]:
     current = str(progress.get("current_stage_key") or "").strip()
     if not current or current == stage_id:

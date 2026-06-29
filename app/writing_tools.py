@@ -14,7 +14,7 @@ from typing import Any
 from app.config import ROOT
 from app.novel_context import WRITING_ROOT, novel_dir, normalize_novel_id
 from app.project_kinds import assemble_generic_bundle, ensure_project_initialized, project_kind
-from app.project_paths import outputs_dir, project_dir, skills_dir, storyboards_dir
+from app.project_paths import assets_dir, outputs_dir, project_dir, skills_dir, storyboards_dir
 
 
 NOVEL_ACQ_DIR = WRITING_ROOT / "novel-acquisition"
@@ -234,9 +234,156 @@ def _assemble_generic_fallback(
     out["generic_branch"] = True
     out["fallback"] = {"reason": reason, **(details or {})}
     bundle = out.get("bundle") or {}
+    _augment_generic_reference_materials(bundle, query=query, novel_id=novel_id)
     bundle["material_health"] = assess_material_health(bundle, task=task, chapter=chapter)
     out["bundle"] = bundle
+    rewrite_material_bundle_output(out, bundle)
     return out
+
+
+def _augment_generic_reference_materials(bundle: dict[str, Any], *, query: str, novel_id: str) -> None:
+    """Add reference novel retrieval to generic material bundles.
+
+    Project-specific assemblers may have richer logic. This fallback keeps new
+    projects from losing the shared reference corpus when no project script exists.
+    """
+    if not str(query or "").strip():
+        return
+    materials = bundle.setdefault("materials", {})
+    if materials.get("semantic_results") or materials.get("five_dim_results"):
+        return
+    try:
+        refs = search_references(query, top_k=8, novel_id=novel_id)
+    except Exception as exc:
+        bundle.setdefault("material_warnings", []).append({
+            "code": "reference_retrieval_failed",
+            "message": f"{type(exc).__name__}: {exc}",
+        })
+        return
+    results = refs.get("results") or []
+    if refs.get("engine") == "semantic_tfidf":
+        materials["semantic_results"] = results[:8]
+    else:
+        materials["five_dim_results"] = results[:8]
+    bundle["reference_retrieval"] = {
+        "engine": refs.get("engine"),
+        "index_ready": refs.get("index_ready"),
+        "notice": refs.get("notice", ""),
+        "count": len(results),
+    }
+
+
+def rewrite_material_bundle_output(out: dict[str, Any], bundle: dict[str, Any]) -> None:
+    output_path = out.get("output_path")
+    if not output_path:
+        return
+    target = (ROOT / output_path).resolve()
+    try:
+        target.relative_to(ROOT.resolve())
+    except ValueError:
+        return
+    if target.is_file():
+        target.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def collect_project_assets(novel_id: str | None, query: str = "", limit: int = 12) -> dict[str, Any]:
+    """Collect current-project assets/references for creative material assembly.
+
+    This only scans the selected project's asset/reference directories. It is used
+    by the creative flow after intent analysis, not by plain chat.
+    """
+    nid = normalize_novel_id(novel_id)
+    roots = [
+        assets_dir(nid),
+        project_dir(nid, "references"),
+    ]
+    keywords = _query_keywords(query)
+    files: list[dict[str, Any]] = []
+    text_excerpts: list[dict[str, Any]] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or "_superseded" in path.parts:
+                continue
+            rel = _rel(path)
+            suffix = path.suffix.lower()
+            item = {
+                "path": rel,
+                "name": path.name,
+                "suffix": suffix,
+                "size": path.stat().st_size,
+                "kind": _asset_kind(suffix),
+            }
+            score = _asset_match_score(path, keywords)
+            if score:
+                item["match_score"] = score
+            files.append(item)
+            if suffix in {".md", ".txt", ".json", ".yaml", ".yml"}:
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    text = ""
+                excerpt = _asset_excerpt(text, keywords)
+                if excerpt:
+                    text_excerpts.append({"path": rel, "text": excerpt, "match_score": score})
+    files.sort(key=lambda item: (item.get("match_score", 0), item.get("size", 0)), reverse=True)
+    text_excerpts.sort(key=lambda item: item.get("match_score", 0), reverse=True)
+    return {
+        "ok": True,
+        "novel_id": nid,
+        "query": query,
+        "roots": [_rel(root) for root in roots if root.exists()],
+        "files": files[:limit],
+        "text_excerpts": text_excerpts[: min(limit, 8)],
+        "total_files": len(files),
+    }
+
+
+def _query_keywords(query: str) -> list[str]:
+    words = re.findall(r"[\u4e00-\u9fa5]{2,8}|[A-Za-z0-9_]{3,}", query or "")
+    stop = {"根据", "分析", "创作", "生成", "写作", "内容", "材料", "项目", "当前"}
+    out: list[str] = []
+    for word in words:
+        if word in stop or word in out:
+            continue
+        out.append(word)
+    return out[:16]
+
+
+def _asset_kind(suffix: str) -> str:
+    if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+        return "image"
+    if suffix in {".md", ".txt", ".json", ".yaml", ".yml"}:
+        return "text"
+    if suffix in {".docx", ".pdf"}:
+        return "document"
+    return "file"
+
+
+def _asset_match_score(path: Path, keywords: list[str]) -> int:
+    if not keywords:
+        return 1
+    haystack = f"{path.stem} {path.parent.name}"
+    return sum(1 for word in keywords if word and word in haystack)
+
+
+def _asset_excerpt(text: str, keywords: list[str], max_chars: int = 1200) -> str:
+    clean = str(text or "").strip()
+    if not clean:
+        return ""
+    if not keywords:
+        return clean[:max_chars]
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", clean) if p.strip()]
+    scored = []
+    for para in paragraphs:
+        score = sum(para.count(word) for word in keywords)
+        if score:
+            scored.append((score, para))
+    if not scored:
+        return clean[:max_chars]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return "\n\n".join(para for _, para in scored[:3])[:max_chars]
 
 
 def _script_supported_tasks(script: Path) -> list[str]:
