@@ -30,9 +30,19 @@ NOVEL_DIR = NOVEL_ACQUISITION_DIR / "novels"
 OUTPUT_DIR = NOVEL_ACQUISITION_DIR / "extracted"
 MIN_PASSAGE_LEN = 30
 MAX_PASSAGE_LEN = 3000
-SAMPLES_PER_DIM = 50       # 每维度总配额
-SAMPLES_PER_ZONE = 17      # 每区配额 (3区 ≈ 51, 取50)
-TWIST_PAIRS_MAX = 30       # 伏笔配对最大输出数
+
+
+def _bounded_int_env(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+SAMPLES_PER_DIM = _bounded_int_env("WRITING_REFERENCE_DIMENSION_LIMIT", 48, 8, 160)
+SAMPLES_PER_ZONE = max(1, (SAMPLES_PER_DIM + 2) // 3)
+TWIST_PAIRS_MAX = _bounded_int_env("WRITING_REFERENCE_TWIST_PAIR_LIMIT", SAMPLES_PER_DIM, 0, 160)
 
 # ── 章节检测 ────────────────────────────────────────────
 
@@ -241,7 +251,45 @@ def extract_characters(text, chapters):
     return all_matches[:SAMPLES_PER_DIM]
 
 
-# ── 维度4：伏笔反转 v2 — 章节感知 + 跨章配对 ────────────
+# ── 维度4：智性表达 ─────────────────────────────────────
+
+INTELLIGENCE_KEYWORDS = [
+    "知识", "学问", "理论", "原理", "规律", "规则", "逻辑", "推理",
+    "判断", "分析", "证明", "解释", "计算", "实验", "研究", "资料",
+    "历史", "制度", "技术", "科学", "医学", "法律", "经济", "政治",
+    "哲学", "思辨", "道理", "本质", "因果", "价值", "意义", "文明",
+    "经验", "方法", "体系", "模型", "结构", "机制", "策略", "方案",
+    "为什么", "所以", "因此", "因为", "由此", "换言之", "也就是说",
+    "明白了", "意识到", "发现", "看出", "推断", "结论", "问题在于",
+]
+
+
+def extract_intelligence(text, chapters):
+    """三区比例采样知识、推理、规则解释和思辨表达。"""
+    early, mid, late = partition_paragraphs(text, chapters)
+    all_matches = []
+    for zone_name, paras in [("early", early), ("mid", mid), ("late", late)]:
+        zone_matches = []
+        for para in paras:
+            if len(para) < 60 or len(para) > 1200:
+                continue
+            hits = [kw for kw in INTELLIGENCE_KEYWORDS if kw in para]
+            if len(hits) < 2:
+                continue
+            connective_bonus = 1 if re.search(r'(?:因为|所以|因此|如果|那么|既然|由此|换言之|也就是说)', para) else 0
+            if len(hits) + connective_bonus >= 3:
+                zone_matches.append({
+                    "text": para,
+                    "keywords": hits[:12],
+                    "length": len(para),
+                    "zone": zone_name,
+                })
+        all_matches.extend(proportional_sample(zone_matches, SAMPLES_PER_ZONE))
+
+    return all_matches[:SAMPLES_PER_DIM]
+
+
+# ── 维度5：伏笔反转 v2 — 章节感知 + 跨章配对 ────────────
 
 # 伏笔「设定」信号 — 前30%章节中检测
 SETUP_PATTERNS = [
@@ -529,7 +577,7 @@ def analyze_novel(novel_title, novel_dir, output_dir):
     chapters = detect_chapters(text)
     print(f"  检测到 {len(chapters)} 章", file=sys.stderr)
 
-    # 提取四大维度
+    # 提取五个基础维度
     scenes = extract_scenes(text, chapters)
     print(f"  🏞️ 场景描写: {len(scenes)} 段 (前中后比例采样)", file=sys.stderr)
 
@@ -539,13 +587,16 @@ def analyze_novel(novel_title, novel_dir, output_dir):
     characters = extract_characters(text, chapters)
     print(f"  👤 人物描写: {len(characters)} 段 (前中后比例采样)", file=sys.stderr)
 
+    intelligence = extract_intelligence(text, chapters)
+    print(f"  🧠 智性表达: {len(intelligence)} 段 (前中后比例采样)", file=sys.stderr)
+
     # v2 伏笔分析（章节感知 + 跨章配对）
     twists, foreshadowing_pairs = extract_twists_v2(text, chapters)
     print(f"  🎭 伏笔单句: {len(twists)} 条 | 跨章配对: {len(foreshadowing_pairs)} 对", file=sys.stderr)
 
     # 统计各区分布
     zone_stats = {}
-    for dim_name, samples in [("scenes", scenes), ("psychology", psychology), ("characters", characters)]:
+    for dim_name, samples in [("scenes", scenes), ("psychology", psychology), ("characters", characters), ("intelligence", intelligence)]:
         zones = Counter(s.get("zone", "unknown") for s in samples)
         zone_stats[dim_name] = dict(zones)
 
@@ -557,18 +608,20 @@ def analyze_novel(novel_title, novel_dir, output_dir):
         "title": novel_title,
         "total_chars": len(text),
         "chapters": len(chapters),
-        "scenes": {"count": len(scenes), "samples": scenes[:20], "zone_distribution": zone_stats.get("scenes", {})},
-        "psychology": {"count": len(psychology), "samples": psychology[:20], "zone_distribution": zone_stats.get("psychology", {})},
-        "characters": {"count": len(characters), "samples": characters[:20], "zone_distribution": zone_stats.get("characters", {})},
-        "twists": {"count": len(twists), "samples": twists[:20]},
+        "dimension_limit": SAMPLES_PER_DIM,
+        "scenes": {"count": len(scenes), "samples": scenes[:SAMPLES_PER_DIM], "zone_distribution": zone_stats.get("scenes", {})},
+        "psychology": {"count": len(psychology), "samples": psychology[:SAMPLES_PER_DIM], "zone_distribution": zone_stats.get("psychology", {})},
+        "characters": {"count": len(characters), "samples": characters[:SAMPLES_PER_DIM], "zone_distribution": zone_stats.get("characters", {})},
+        "intelligence": {"count": len(intelligence), "samples": intelligence[:SAMPLES_PER_DIM], "zone_distribution": zone_stats.get("intelligence", {})},
+        "twists": {"count": len(twists), "samples": twists[:SAMPLES_PER_DIM]},
         "foreshadowing_pairs": {
             "count": len(foreshadowing_pairs),
-            "pairs": foreshadowing_pairs[:15],  # 最前面15对
+            "pairs": foreshadowing_pairs[:TWIST_PAIRS_MAX],
         },
     }
 
     # 分别保存
-    for key in ["scenes", "psychology", "characters", "twists", "foreshadowing_pairs"]:
+    for key in ["scenes", "psychology", "characters", "intelligence", "twists", "foreshadowing_pairs"]:
         filepath = out_dir / f"{key}.json"
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(result[key], f, ensure_ascii=False, indent=2)

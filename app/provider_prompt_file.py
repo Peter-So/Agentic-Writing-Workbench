@@ -7,6 +7,7 @@ from typing import Any
 
 from app.config import ROOT
 from app.novel_context import WRITING_ROOT, normalize_novel_id
+from app.prompt_boundaries import sanitize_delivery_boundary_text
 from app.project_paths import outputs_dir
 from app.project_kinds import SHORT_FILM_KIND
 from app.writing_sop import sop_for_task
@@ -53,7 +54,7 @@ _MUST_NOT = [
     "禁止 AI 身体怪癖（磨牙/咬指甲/转笔/抖腿）",
     "禁用词：标志着/象征着/不禁/不由得/仿佛/宛如/似乎/意味着",
     "禁止同章完全相同的句子",
-    "每段须可追溯到材料来源",
+    "每段须能在内部追溯到材料依据，但不要在正文里写来源标签",
 ]
 
 _SHORT_FILM_MUST_NOT = [
@@ -115,7 +116,7 @@ def _delivery_rules(project_kind: str, task: str) -> list[str]:
         return [
             "直接输出成品正文，不要解释过程。",
             "正文按章节叙事输出，字数 4000-6000。",
-            "如需标注来源，只能使用外发材料名：[本章大纲]/[前情]/[人物设定]/[参考技法]。",
+            "材料来源只用于内部核对，不要在正文段尾标注来源、provider、技法或文档名。",
         ]
     if task in {"expansion", "fix"}:
         return [
@@ -157,7 +158,26 @@ def build_request_text(
     )
     packet = material_index.get("external_packet") or {}
     material_block = format_provider_packet(material_index)
-    task_sentence = packet.get("task") or message or "按当前材料完成本次写作任务。"
+    extra_materials = []
+    for key in (
+        "creative_state",
+        "methodology_context",
+        "creative_preflight",
+        "reference_cards",
+        "chapter_function",
+        "reader_experience",
+        "packaging_context",
+        "research_brief",
+        "self_check_loop",
+        "humanization_check",
+    ):
+        item = bundle.get(key) or {}
+        text = item.get("text") if isinstance(item, dict) else ""
+        if text:
+            extra_materials.append(sanitize_delivery_boundary_text(str(text)))
+    if extra_materials:
+        material_block = "\n\n".join([material_block, *extra_materials])
+    task_sentence = sanitize_delivery_boundary_text(packet.get("task") or message or "按当前材料完成本次写作任务。")
     if project_kind == SHORT_FILM_KIND:
         brief = _SHORT_FILM_TASK_BRIEF.get(task, "请完成下述电影短片创作任务。")
         must_not = _SHORT_FILM_MUST_NOT

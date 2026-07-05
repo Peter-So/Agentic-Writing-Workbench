@@ -4,6 +4,7 @@ from typing import Any
 
 from app.config import load_runtime_config
 from app.llm_client import create_llm, resolve_text_model
+from app.prompt_boundaries import sanitize_delivery_boundary_text
 from app.writing_task_profiles import is_novel_planning_task, novel_stage_profile
 
 
@@ -12,7 +13,7 @@ from app.writing_task_profiles import is_novel_planning_task, novel_stage_profil
 # [材料区] 必须使用的材料（含 provider 答案，阶段 C 注入）
 # [规则区] 必须遵守的规范（spec）
 # [重组指令] 如何改造材料
-# [输出格式] 每段标注材料来源
+# [输出格式] 只输出可采纳正文或结构稿，材料来源只用于内部核对
 SYSTEM_INSTRUCTION = (
     "你是中文小说写作的材料重组器，不是自由创作者。"
     "你只能基于下方提供的材料进行重组改造：提取材料中的机制与模式，"
@@ -45,8 +46,11 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
                       long_term_settings: list[dict] | None = None,
                       output_recall: list[dict] | None = None,
                       wiki_items: list[dict] | None = None,
-                      project_wiki_items: list[dict] | None = None) -> str:
-    """把 materials + provider 答案 + 跨章节进展 + 长期设定 + 产出语义召回拼成"材料区"文本，带来源标注。"""
+                      project_wiki_items: list[dict] | None = None,
+                      methodology_context: dict[str, Any] | None = None,
+                      creative_preflight: dict[str, Any] | None = None,
+                      creative_state: dict[str, Any] | None = None) -> str:
+    """把 materials + provider 答案 + 跨章节进展 + 长期设定 + 产出语义召回拼成材料区。"""
     parts: list[str] = []
 
     # LLM Wiki：人工确认后的稳定规则/项目共识，权威高于普通 RAG 片段。
@@ -68,6 +72,18 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
                 parts.append("## 项目 Wiki：过程知识与项目状态\n" + project_wiki_block)
         except Exception:
             pass
+
+    state_text = (creative_state or {}).get("text") if isinstance(creative_state, dict) else ""
+    if state_text:
+        parts.append(str(state_text))
+
+    methodology_text = (methodology_context or {}).get("text") if isinstance(methodology_context, dict) else ""
+    if methodology_text:
+        parts.append(str(methodology_text))
+
+    preflight_text = (creative_preflight or {}).get("text") if isinstance(creative_preflight, dict) else ""
+    if preflight_text:
+        parts.append(str(preflight_text))
 
     # 产出库语义召回：既往已确认章节/摘要/设定的语义相关片段（RAG 增量记忆）。
     for item in output_recall or []:
@@ -189,20 +205,28 @@ def build_generation_prompt(
 ) -> list[dict[str, str]]:
     """构建材料驱动生成的消息列表（system + human）。"""
     materials = bundle.get("materials") or {}
-    spec = bundle.get("spec") or ""
-    recompose = bundle.get("recompose_instruction") or ""
+    spec = sanitize_delivery_boundary_text(bundle.get("spec") or "")
+    recompose = sanitize_delivery_boundary_text(bundle.get("recompose_instruction") or "")
     project_kind = bundle.get("project_kind") or "novel_strong"
     user_request = (bundle.get("user_request") or bundle.get("request_text") or "").strip()
     request_analysis = bundle.get("request_analysis") or {}
     deliverable = request_analysis.get("deliverable") or ""
     answer_style = request_analysis.get("answer_style") or ""
-    generator_instruction = request_analysis.get("generator_instruction") or ""
+    generator_instruction = sanitize_delivery_boundary_text(request_analysis.get("generator_instruction") or "")
     task = bundle.get("task", "prose")
 
     material_block = _format_materials(
         materials, provider_answers, bundle.get("cross_chapter"), bundle.get("long_term_settings"),
         bundle.get("output_recall"), bundle.get("wiki_items"), bundle.get("project_wiki_items"),
+        bundle.get("methodology_context"), bundle.get("creative_preflight"), bundle.get("creative_state"),
     )
+    enhancement_block = ""
+    try:
+        from app.creative_enhancements import format_enhancement_blocks
+
+        enhancement_block = format_enhancement_blocks(bundle)
+    except Exception:
+        enhancement_block = ""
     technique_block = ""
     try:
         from app.writing_techniques import technique_context_for_task
@@ -244,6 +268,9 @@ def build_generation_prompt(
         "[材料区] 以下是你必须使用的材料：",
         material_block,
         "",
+        "[创作增强检查] 以下为本轮阶段化增强卡，只作为流程控制和验收依据，不得写进定稿正文：",
+        enhancement_block or "（无额外增强卡。）",
+        "",
         "[技能范式] 以下技能只作为创作方法和检查点，不得照抄技能文本：",
         skill_block or "（无额外技能卡。）",
         "",
@@ -264,7 +291,7 @@ def build_generation_prompt(
     human_sections += [
         "",
         "[重组指令] 将上述材料按以下方式重组：",
-        recompose or "提取机制不抄内容；用项目人物/设定/风格重新表达；每段标注材料来源。",
+        recompose or "提取机制不抄内容；用项目人物/设定/风格重新表达；内部核对材料来源，但不要把来源标签写进定稿。",
     ]
     if revise_target:
         human_sections += [
@@ -309,9 +336,8 @@ def build_generation_prompt(
     else:
         human_sections += [
             "",
-            "[输出格式] 直接输出正文。每段结尾用方括号标注材料来源，",
-            "如 [五维·书名·维度] / [源文档·大纲] / [provider·千问] / [技法·压力源→延迟→释放→余味]。",
-            "无材料来源的段落一律不要写。",
+            "[输出格式] 直接输出可采纳正文，不要输出来源标签、过程说明、provider 名称、五维维度、角色/技法/源文档尾注。",
+            "材料来源只作为内部核对依据；无材料支撑的内容不要写。",
         ]
     if task in {"outline", "character", "screenplay", "shot_list", "beat_sheet", "logline", "setting", "world"}:
         human_sections += [

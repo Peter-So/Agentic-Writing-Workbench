@@ -1,5 +1,37 @@
 # 更新日志
 
+## Agentic-Writing-Workbench-v0.1.6
+
+本版补强多维参考库、创作方法知识库和信息边界，确保参考小说导入、阶段材料组装、provider 外发和最终成稿之间职责清晰。
+
+### 新增
+
+- 新增公共创作方法知识库，沉淀小说创作目标定位、章节功能、读者体验、研究细节、去 AI 味等方法论。
+- 新增创作增强卡：参考拆解、章节/场次功能、读者体验、卖点包装、研究提示、自检和人味检查。
+- 新增创作状态卡/伏笔账本，归档后可回写连续性状态，后续创作可按阶段 profile 决定是否注入。
+- 新增多维参考库基础维度 `intelligence`，并补充 method_* 创作方法维度。
+- 新增多维数据回填脚本：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\backfill-reference-dimensions.py --rebuild-index --dimension-limit 48 --method-fallback-limit 8
+.\.venv\Scripts\python.exe scripts\backfill-reference-method-dimensions.py --rebuild-index --method-dim-limit 48 --method-fallback-limit 8
+```
+
+### 优化
+
+- 参考小说导入流程统一基础维度与 method_* 维度的单维度上限，默认每本书每个维度最多 48 条。
+- 回填脚本会合并并跳过重复维度数据，不覆盖已入库的非目标维度，也不影响项目 Wiki、项目文档和用户资产索引。
+- Web UI 参考库图表从五维展示调整为多维展示，补充基础维度、智性维度和 method_* 维度统计。
+- 创作链路按阶段 profile 精简或增强材料组装，避免概念/设定/人物等前期阶段收到正文阶段材料污染。
+- provider 外发任务单只使用外发安全材料包；本地参考小说指针保留在 `local_only`，不直接发给外部网页模型。
+
+### 修复
+
+- 修复旧项目 spec 中“段尾标注来源”类指令可能污染最终正文的问题，进入模型前统一改为内部追溯，不输出来源标签。
+- 修复状态卡 prompt 带出本地路径的问题，路径只保留在结构化数据中供 UI 和审计使用。
+- 修复正文阶段验收信号容易诱导模型输出“材料来源”的问题，统一改为“材料依据”。
+- 修复基础维度数据量显著少于 method_* 维度的问题，基础维度和方法维度使用同一限制口径。
+
 ## Agentic-Writing-Workbench-v0.1.5
 
 本版继续收紧小说创作链路的阶段材料边界，避免不同创作阶段互相污染，并补强创作按钮的项目资产与参考小说材料召回。

@@ -1,0 +1,145 @@
+{
+  "version": "2026-07-05",
+  "source_scope": [
+    "E:/writing/经验方法/*.txt",
+    "E:/writing/经验方法/指令集合"
+  ],
+  "usage_guard": "只保存抽象创作方法、流程控制和验收检查，不保存私有小说文本、外部正文片段或可复刻的长提示词。",
+  "items": [
+    {
+      "id": "target-reader-positioning",
+      "name": "目标读者定位",
+      "stages": ["concept", "setting"],
+      "tasks": ["logline", "brief", "setting"],
+      "keywords": ["平台", "读者", "题材", "卖点", "项目一句话", "核心命题"],
+      "summary": "创作初期先确认平台、目标读者、题材承诺、核心命题和故事卖点，再扩展设定。",
+      "prompt_law": "目标读者定位：先写清平台/读者/题材承诺/核心命题/故事卖点，避免只输出抽象灵感。"
+    },
+    {
+      "id": "stage-boundary",
+      "name": "阶段边界",
+      "stages": ["concept", "setting", "world", "character", "outline", "plot", "prose"],
+      "tasks": ["logline", "setting", "world", "character", "outline", "beat_sheet", "prose", "fix"],
+      "keywords": ["概念", "设定", "世界观", "人物", "大纲", "情节", "正文", "阶段"],
+      "summary": "概念写故事承诺，设定写规则边界，大纲写事件骨架，正文写场景行动。",
+      "prompt_law": "阶段边界：概念不写成长正文，正文不混入方法说明；每阶段只输出可归档到对应文件的内容。"
+    },
+    {
+      "id": "reference-decomposition",
+      "name": "参考小说拆解",
+      "stages": ["outline", "plot", "prose"],
+      "tasks": ["outline", "beat_sheet", "prose", "expansion", "fix"],
+      "keywords": ["参考小说", "五维", "风格", "节奏", "爽点", "避雷", "拆解"],
+      "summary": "参考小说只拆机制、节奏、风格和避雷点，不照搬人物、物品、情节片段。",
+      "prompt_law": "参考拆解：只提取结构机制、情绪节奏、信息释放和避雷项，不复制参考小说具体名词或桥段。"
+    },
+    {
+      "id": "golden-three-chapters",
+      "name": "黄金前三章",
+      "stages": ["outline", "plot", "prose"],
+      "tasks": ["outline", "beat_sheet", "prose"],
+      "keywords": ["前三章", "开篇", "承诺", "钩子", "读者期待"],
+      "summary": "开篇必须快速给出主角处境、核心矛盾、类型承诺和继续阅读钩子。",
+      "prompt_law": "黄金前三章：开篇围绕处境、欲望、阻碍、类型承诺和章末钩子组织，不用大段设定说明拖慢进入。"
+    },
+    {
+      "id": "motivation-information-benefit",
+      "name": "动机-信息-收益链",
+      "stages": ["outline", "plot", "prose"],
+      "tasks": ["outline", "beat_sheet", "prose", "fix"],
+      "keywords": ["动机", "信息边界", "收益", "代价", "因果", "反派", "误判"],
+      "summary": "关键行动要检查人物动机、信息边界、收益代价、对手误判和反制逻辑。",
+      "prompt_law": "动机链自检：每个关键行为都要有欲望、信息边界、收益和代价，对手行动要有误判或反制依据。"
+    },
+    {
+      "id": "chapter-function",
+      "name": "章节功能识别",
+      "stages": ["plot", "prose"],
+      "tasks": ["beat_sheet", "prose", "expansion", "fix"],
+      "keywords": ["章节类型", "布局", "战斗", "冲突", "过渡", "恢复", "信息揭示"],
+      "summary": "正文前先判断章节承担布局、冲突、过渡、恢复或信息揭示功能。",
+      "prompt_law": "章节功能：先标清本章是布局、冲突、过渡、恢复还是信息揭示，再决定节奏和材料取舍。"
+    },
+    {
+      "id": "state-card-hook-ledger",
+      "name": "状态卡与伏笔账本",
+      "stages": ["plot", "prose"],
+      "tasks": ["beat_sheet", "prose", "expansion", "fix", "outline"],
+      "keywords": ["状态卡", "伏笔", "钩子", "账本", "续写", "章节摘要"],
+      "summary": "续写前读当前状态卡和未回收钩子，归档后更新状态与伏笔账本。",
+      "prompt_law": "状态连续：续写不机械通读旧章节，优先读取当前状态卡、章节摘要和伏笔账本，归档后补记新增/推进/回收项。"
+    },
+    {
+      "id": "reader-experience",
+      "name": "读者体验验收",
+      "stages": ["plot", "prose"],
+      "tasks": ["beat_sheet", "prose", "fix"],
+      "keywords": ["爽点", "压力", "释放", "余味", "期待", "沉浸"],
+      "summary": "情节和正文要检查压力、延迟、释放、余味和读者期待是否闭合。",
+      "prompt_law": "读者体验：每个核心段落要能说明压力源、延迟、释放和余味，不能只有作者解释或设定罗列。"
+    },
+    {
+      "id": "anti-ai-flavor",
+      "name": "去 AI 味",
+      "stages": ["prose"],
+      "tasks": ["prose", "expansion", "fix"],
+      "keywords": ["AI味", "机械", "总结", "环境描写", "空泛", "人味"],
+      "summary": "减少空泛环境铺垫、机械连接词、段尾升华和解释性总结，用具体动作和对白推进。",
+      "prompt_law": "去 AI 味：删空泛铺垫、机械总结和漂亮废话，用具体动作、对白、停顿、选择和不完美细节承载情绪。"
+    },
+    {
+      "id": "research-before-writing",
+      "name": "事实考据前置",
+      "stages": ["setting", "world", "outline", "plot", "prose"],
+      "tasks": ["setting", "world", "outline", "beat_sheet", "prose"],
+      "keywords": ["历史", "军事", "年代", "行业", "真实", "考据", "资料"],
+      "summary": "涉及历史、军事、行业或年代事实时，先做资料核查和边界标注，再进入正文。",
+      "prompt_law": "事实考据：历史/军事/行业/年代细节必须先明确事实来源和可虚构边界，不用模型记忆直接编事实。"
+    },
+    {
+      "id": "title-intro-selling-point",
+      "name": "标题简介卖点包装",
+      "stages": ["concept", "setting", "outline"],
+      "tasks": ["logline", "brief", "outline"],
+      "keywords": ["标题", "简介", "卖点", "反差", "悬念", "痛点", "利益点"],
+      "summary": "对外包装要突出反差、悬念、利益点和故事承诺，避免只介绍设定。",
+      "prompt_law": "卖点包装：标题/简介优先呈现反差、悬念、痛点或利益点，让读者知道为什么现在要看。"
+    },
+    {
+      "id": "prompt-contract",
+      "name": "结构化 Prompt 契约",
+      "stages": ["concept", "setting", "world", "character", "outline", "plot", "prose"],
+      "tasks": ["logline", "setting", "world", "character", "outline", "beat_sheet", "prose", "fix"],
+      "keywords": ["角色", "目标", "流程", "约束", "输出格式", "验收", "Prompt"],
+      "summary": "复杂任务需要明确角色、目标、材料、流程、硬约束和输出格式，防止模型自由发挥。",
+      "prompt_law": "Prompt 契约：每轮创作都要明确角色、目标、材料边界、流程步骤、禁止项和输出格式，输出只保留可采纳定稿。"
+    },
+    {
+      "id": "style-internalization",
+      "name": "风格内化",
+      "stages": ["prose"],
+      "tasks": ["prose", "expansion", "fix"],
+      "keywords": ["风格", "语言DNA", "节奏", "口吻", "人味", "自然表达"],
+      "summary": "风格不是表演标签，而是句式、节奏、认知方式、情绪表达和取材习惯的稳定组合。",
+      "prompt_law": "风格内化：学习语言节奏、认知视角、情绪表达和细节选择，不在正文里表演风格标签或复述风格说明。"
+    },
+    {
+      "id": "story-decomposition",
+      "name": "故事拆解",
+      "stages": ["concept", "outline", "plot", "prose"],
+      "tasks": ["logline", "outline", "beat_sheet", "prose", "fix"],
+      "keywords": ["拆解", "结构", "标题", "开头", "转折", "技巧", "模式"],
+      "summary": "拆作品时分层看标题、开头、结构、情绪推进、转折、语言和可复用模式。",
+      "prompt_law": "故事拆解：先拆标题/开头/结构/情绪/转折/语言/模式，再把机制转成本项目可用的阶段规则。"
+    },
+    {
+      "id": "multi-round-research",
+      "name": "多轮研究闭环",
+      "stages": ["setting", "world", "outline", "plot", "prose"],
+      "tasks": ["setting", "world", "outline", "beat_sheet", "prose"],
+      "keywords": ["搜索", "研究", "史实", "资料", "数字", "矛盾", "细节", "事实"],
+      "summary": "历史、军事、现实题材需要分轮搜索：事实框架、戏剧细节、矛盾冲突、表达素材，并在写作前标清边界。",
+      "prompt_law": "多轮研究：事实题材先分轮核查框架、数字、矛盾和戏剧细节；没有可靠来源时只写待考据或虚构边界。"
+    }
+  ]
+}

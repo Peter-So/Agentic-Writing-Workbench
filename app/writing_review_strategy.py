@@ -62,6 +62,9 @@ def deterministic_review(
     draft: str,
     strategy: dict[str, Any],
     technique_context: dict[str, Any] | None = None,
+    creative_preflight: dict[str, Any] | None = None,
+    methodology_context: dict[str, Any] | None = None,
+    creative_enhancements: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = draft or ""
     kind = project_kind or ""
@@ -78,6 +81,88 @@ def deterministic_review(
                 f"novel_{profile.get('id')}_signal",
                 f"{profile.get('label') or '小说前期'}稿缺少可验收结构信号：{', '.join(signals[:8])}。",
             )
+        if task_key in {"prose", "expansion", "fix"}:
+            _require_any(
+                text,
+                ["动作", "对白", "视线", "停顿", "选择", "冲突"],
+                issues,
+                "reader_experience_signal",
+                "正文缺少动作/对白/选择/冲突等读者体验信号，可能仍停留在说明层。",
+            )
+    for check in (creative_preflight or {}).get("checks") or []:
+        if isinstance(check, dict) and check.get("level") == "warn":
+            issues.append({
+                "level": "warn",
+                "code": f"preflight_{check.get('code')}",
+                "message": check.get("message") or "创作前置检查存在警告。",
+            })
+    enhancements = creative_enhancements or {}
+    reference_items = (enhancements.get("reference_cards") or {}).get("items") or []
+    method_dims = {
+        str(item.get("dimension") or "")
+        for item in reference_items
+        if isinstance(item, dict) and str(item.get("dimension") or "").startswith("method_")
+    }
+    if method_dims:
+        if "method_motivation_chain" in method_dims:
+            _require_any(
+                text,
+                ["为了", "必须", "代价", "选择", "阻碍", "想要"],
+                issues,
+                "method_motivation_chain_signal",
+                "已召回动机链参考维度，但稿件中欲望/阻碍/代价/选择信号不足。",
+            )
+        if "method_reader_experience" in method_dims:
+            _require_any(
+                text,
+                ["悬念", "压力", "紧张", "期待", "释放", "余味", "冲突"],
+                issues,
+                "method_reader_experience_signal",
+                "已召回读者体验参考维度，但稿件中压力/悬念/释放/余味信号不足。",
+            )
+        if "method_chapter_function" in method_dims and task_key in {"outline", "beat_sheet", "prose", "expansion", "fix"}:
+            _require_any(
+                text,
+                ["推进", "转折", "钩子", "回收", "升级", "揭示", "收束"],
+                issues,
+                "method_chapter_function_signal",
+                "已召回章节功能参考维度，但稿件中章节推进/转折/回收功能不够明确。",
+            )
+        if "method_humanization" in method_dims and task_key in {"prose", "expansion", "fix"}:
+            _require_any(
+                text,
+                ["“", "”", "停", "看", "皱", "沉默", "低声"],
+                issues,
+                "method_humanization_signal",
+                "已召回人味表达参考维度，但稿件中对白、停顿或细微动作信号不足。",
+            )
+    if (enhancements.get("research_brief") or {}).get("needed"):
+        issues.append({
+            "level": "warn",
+            "code": "research_brief_needed",
+            "message": "本轮触发事实考据节点；若定稿包含具体事实，请确认有来源或标记为虚构边界。",
+        })
+    if kind == STRONG_NOVEL_KIND and task_key in {"logline", "brief", "setting", "outline"}:
+        _require_any(
+            text,
+            ["读者", "卖点", "故事承诺", "核心命题", "主角", "阻碍"],
+            issues,
+            "packaging_signal",
+            "前期规划稿缺少目标读者/卖点/故事承诺等包装与定位信号。",
+        )
+    if kind == STRONG_NOVEL_KIND and task_key in {"prose", "expansion", "fix"}:
+        try:
+            from app.creative_enhancements import anti_ai_flags
+
+            flags = anti_ai_flags(text)
+        except Exception:
+            flags = []
+        if flags:
+            issues.append({
+                "level": "warn",
+                "code": "anti_ai_flavor_flags",
+                "message": "正文存在疑似机械表达或空泛表达：" + "；".join(flags[:4]),
+            })
     if kind == SHORT_FILM_KIND:
         if task_key == "screenplay":
             _require(text, ["场景", "动作", "对白"], issues, "screenplay_basic_format")
@@ -100,6 +185,9 @@ def deterministic_review(
         "issues": issues,
         "strategy": strategy,
         "technique_context": technique_context or {},
+        "methodology_context": methodology_context or {},
+        "creative_preflight": creative_preflight or {},
+        "creative_enhancements": creative_enhancements or {},
     }
 
 

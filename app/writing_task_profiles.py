@@ -14,7 +14,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "base_setting",
         "flow": "planning_light",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize"],
-        "material_sections": ["base_setting", "style_guide", "project_wiki", "writing_techniques"],
+        "material_sections": ["base_setting", "style_guide", "project_wiki", "writing_techniques", "methodology", "packaging", "self_check"],
         "acceptance_signals": ["项目一句话", "类型", "基调", "核心命题", "主角", "阻碍", "故事承诺"],
     },
     "setting": {
@@ -25,7 +25,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "base_setting",
         "flow": "planning_light",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize"],
-        "material_sections": ["base_setting", "worldview", "style_guide", "project_wiki", "writing_techniques"],
+        "material_sections": ["base_setting", "worldview", "style_guide", "project_wiki", "writing_techniques", "methodology", "packaging", "research", "self_check"],
         "acceptance_signals": ["项目一句话", "类型", "基调", "核心命题", "创作约束", "边界"],
     },
     "world": {
@@ -36,7 +36,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "worldview",
         "flow": "planning_light",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize"],
-        "material_sections": ["worldview", "base_setting", "plot", "project_wiki"],
+        "material_sections": ["worldview", "base_setting", "plot", "project_wiki", "methodology", "research", "self_check"],
         "acceptance_signals": ["规则", "边界", "时间线", "空间", "制度", "禁忌", "剧情约束"],
     },
     "character": {
@@ -47,7 +47,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "character",
         "flow": "planning_light",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize"],
-        "material_sections": ["character", "base_setting", "worldview", "plot", "project_wiki", "writing_techniques"],
+        "material_sections": ["character", "base_setting", "worldview", "plot", "project_wiki", "writing_techniques", "methodology", "self_check"],
         "acceptance_signals": ["姓名", "定位", "欲望", "阻碍", "关系", "声音", "弧光"],
     },
     "outline": {
@@ -58,7 +58,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "outline",
         "flow": "planning_archive",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize", "archive"],
-        "material_sections": ["outline", "base_setting", "character", "worldview", "plot", "chapter_summary", "project_wiki", "writing_techniques"],
+        "material_sections": ["outline", "base_setting", "character", "worldview", "plot", "chapter_summary", "project_wiki", "writing_techniques", "methodology", "creative_state", "packaging", "research", "chapter_function", "reader_experience", "self_check"],
         "acceptance_signals": ["全书结构", "章节", "主线", "冲突", "转折", "钩子", "伏笔", "回收"],
     },
     "plot": {
@@ -69,7 +69,7 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "structure_role": "plot",
         "flow": "planning_light",
         "node_flow": ["request_analyze", "draft_assemble", "provider_route", "generate", "model_review", "draft_finalize"],
-        "material_sections": ["plot", "outline", "character", "worldview", "chapter_summary", "project_wiki", "writing_techniques"],
+        "material_sections": ["plot", "outline", "character", "worldview", "chapter_summary", "project_wiki", "writing_techniques", "methodology", "creative_state", "reference_novels", "research", "chapter_function", "reader_experience", "self_check"],
         "acceptance_signals": ["主线", "场景", "行动", "阻力", "变化", "压力源", "释放", "余味"],
     },
     "prose": {
@@ -83,8 +83,8 @@ NOVEL_STAGE_PROFILES: dict[str, dict[str, Any]] = {
             "request_analyze", "draft_assemble", "provider_route", "generate",
             "pre_review", "model_review", "draft_finalize", "archive",
         ],
-        "material_sections": ["outline", "character", "worldview", "plot", "chapter_summary", "style_guide", "project_wiki", "writing_techniques", "reference_novels"],
-        "acceptance_signals": ["场景", "动作", "对白", "冲突", "连续性", "材料来源", "章节目标"],
+        "material_sections": ["outline", "character", "worldview", "plot", "chapter_summary", "style_guide", "project_wiki", "writing_techniques", "methodology", "creative_state", "reference_novels", "research", "chapter_function", "reader_experience", "self_check", "humanization"],
+        "acceptance_signals": ["场景", "动作", "对白", "冲突", "连续性", "材料依据", "章节目标"],
     },
 }
 
@@ -262,6 +262,17 @@ def apply_stage_material_profile(
         "wiki_items": ("project_wiki",),
         "project_wiki_items": ("project_wiki",),
         "technique_context": ("writing_techniques",),
+        "methodology_context": ("methodology",),
+        "creative_preflight": ("methodology",),
+        "method_reference_results": ("methodology", "reference_novels"),
+        "creative_state": ("creative_state",),
+        "reference_cards": ("reference_novels",),
+        "chapter_function": ("chapter_function",),
+        "reader_experience": ("reader_experience",),
+        "packaging_context": ("packaging",),
+        "research_brief": ("research",),
+        "self_check_loop": ("self_check",),
+        "humanization_check": ("humanization",),
         "reference_retrieval": ("reference_novels",),
     }
     for key, sections in top_level_roles.items():

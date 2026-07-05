@@ -20,6 +20,54 @@ from app.project_paths import assets_dir, outputs_dir, project_dir, skills_dir, 
 NOVEL_ACQ_DIR = WRITING_ROOT / "novel-acquisition"
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 
+METHOD_REFERENCE_DIMENSIONS = (
+    "method_opening_promise",
+    "method_motivation_chain",
+    "method_chapter_function",
+    "method_reader_experience",
+    "method_reference_decomposition",
+    "method_research_detail",
+    "method_humanization",
+)
+
+METHOD_REFERENCE_DIMENSION_PROFILES: dict[str, dict[str, Any]] = {
+    "method_opening_promise": {
+        "label": "开篇承诺",
+        "use": "定位目标读者、核心承诺、首钩与期待管理。",
+        "tasks": {"logline", "brief", "setting", "outline", "beat_sheet"},
+    },
+    "method_motivation_chain": {
+        "label": "动机链",
+        "use": "比对人物欲望、阻碍、收益、代价和行动理由。",
+        "tasks": {"character", "outline", "beat_sheet", "prose", "expansion", "fix", "screenplay"},
+    },
+    "method_chapter_function": {
+        "label": "章节功能",
+        "use": "比对章节/场次承担的推进、转折、释放与钩子回收功能。",
+        "tasks": {"outline", "beat_sheet", "prose", "expansion", "fix", "screenplay", "shot_list"},
+    },
+    "method_reader_experience": {
+        "label": "读者体验",
+        "use": "比对压力、悬念、爽点、延迟释放和余味。",
+        "tasks": {"logline", "brief", "outline", "beat_sheet", "prose", "expansion", "fix", "screenplay"},
+    },
+    "method_reference_decomposition": {
+        "label": "参考拆解",
+        "use": "拆动作、对白、物件、信息释放等可迁移机制，避免照抄内容。",
+        "tasks": {"outline", "beat_sheet", "prose", "expansion", "fix", "screenplay"},
+    },
+    "method_research_detail": {
+        "label": "事实细节",
+        "use": "比对事实细节如何服务可信度、氛围和人物选择。",
+        "tasks": {"setting", "outline", "beat_sheet", "prose", "expansion", "fix", "screenplay"},
+    },
+    "method_humanization": {
+        "label": "人味表达",
+        "use": "比对自然对白、停顿、动作残缺和非模板化表达。",
+        "tasks": {"character", "prose", "expansion", "fix", "screenplay"},
+    },
+}
+
 
 class WritingToolError(RuntimeError):
     pass
@@ -86,29 +134,72 @@ def build_semantic_index(novel_id: str | None = None) -> dict[str, Any]:
     }
 
 
-def search_references(query: str, dimension: str | None = None, top_k: int = 8,
+def _dimension_arg(dimension: str | list[str] | tuple[str, ...] | None) -> str:
+    if not dimension:
+        return ""
+    if isinstance(dimension, str):
+        return dimension.strip()
+    return ",".join(str(item).strip() for item in dimension if str(item).strip())
+
+
+def _unique_reference_results(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str, str]] = set()
+    unique: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = (
+            str(item.get("novel") or item.get("book") or item.get("source") or ""),
+            str(item.get("anchor") or item.get("anchor_label") or ""),
+            str(item.get("dimension") or ""),
+            str(item.get("text") or item.get("content") or "")[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def search_references(query: str, dimension: str | list[str] | tuple[str, ...] | None = None, top_k: int = 8,
                       novel_id: str | None = None) -> dict[str, Any]:
     if not query.strip():
         raise WritingToolError("检索词不能为空")
 
+    dim_arg = _dimension_arg(dimension)
     semantic_index = NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl"
     if semantic_index.exists():
         script = NOVEL_ACQ_DIR / "semantic_search.py"
         args = [_python(), str(script), query, "--top", str(top_k), "--json"]
-        if dimension:
-            args += ["--dim", dimension]
+        if dim_arg:
+            args += ["--dim", dim_arg]
         result = _run(args, cwd=NOVEL_ACQ_DIR, timeout=60, novel_id=novel_id)
+        parsed = _json_from_stdout(result.stdout) or []
+        if not parsed and "method_" in dim_arg:
+            script = NOVEL_ACQ_DIR / "five_dim_search.py"
+            fallback_args = [_python(), str(script), query, "--top", str(top_k), "--json", "--dim", dim_arg]
+            fallback = _run(fallback_args, cwd=NOVEL_ACQ_DIR, timeout=60, novel_id=novel_id)
+            fallback_results = _json_from_stdout(fallback.stdout) or []
+            return {
+                "engine": "five_dim_exact",
+                "query": query,
+                "results": fallback_results,
+                "index_ready": True,
+                "notice": "语义索引未命中 method_* 维度，已使用多维参考库精确检索兜底。",
+            }
         return {
             "engine": "semantic_tfidf",
             "query": query,
-            "results": _json_from_stdout(result.stdout) or [],
+            "results": parsed,
             "index_ready": True,
         }
 
     script = NOVEL_ACQ_DIR / "five_dim_search.py"
     args = [_python(), str(script), query, "--top", str(top_k), "--json"]
-    if dimension:
-        args += ["--dim", dimension]
+    if dim_arg:
+        args += ["--dim", dim_arg]
     result = _run(args, cwd=NOVEL_ACQ_DIR, timeout=60, novel_id=novel_id)
     return {
         "engine": "five_dim_exact",
@@ -117,6 +208,158 @@ def search_references(query: str, dimension: str | None = None, top_k: int = 8,
         "index_ready": False,
         "notice": "语义索引未构建，已使用五维精确检索。可先执行 build-index 获得更好召回。",
     }
+
+
+def method_dimensions_for_task(
+    project_kind_value: str | None,
+    task: str | None,
+    creative_stage: str | None = None,
+) -> list[str]:
+    """Return method-oriented reference dimensions relevant to the current creative task."""
+    kind = str(project_kind_value or "")
+    task_key = str(task or "").strip().lower()
+    stage = str(creative_stage or "").strip().lower()
+    if kind not in {"novel_strong", "short_film"}:
+        return []
+    if not task_key and not stage:
+        return []
+
+    selected: list[str] = []
+    for dim, profile in METHOD_REFERENCE_DIMENSION_PROFILES.items():
+        tasks = set(profile.get("tasks") or ())
+        if task_key in tasks:
+            selected.append(dim)
+            continue
+        if stage and (
+            ("concept" in stage and dim in {"method_opening_promise", "method_reader_experience"})
+            or ("outline" in stage and dim in {"method_chapter_function", "method_motivation_chain", "method_reader_experience"})
+            or ("prose" in stage and dim in {"method_reference_decomposition", "method_humanization", "method_reader_experience"})
+        ):
+            selected.append(dim)
+    return selected
+
+
+def collect_method_reference_materials(
+    query: str,
+    *,
+    project_kind_value: str | None,
+    task: str | None,
+    creative_stage: str | None = None,
+    novel_id: str | None = None,
+    top_k: int = 8,
+) -> dict[str, Any]:
+    """Actively recall method_* reference dimensions for creation-time material assembly.
+
+    This is intentionally separate from generic reference retrieval: it summons
+    method evidence only when the current project/task can use it, then exposes
+    coverage so health checks and review can tell whether the new dimensions
+    actually participated in the flow.
+    """
+    dims = method_dimensions_for_task(project_kind_value, task, creative_stage)
+    base_query = str(query or "").strip()
+    if not dims or not base_query:
+        return {
+            "ok": True,
+            "results": [],
+            "dimensions": dims,
+            "coverage": {},
+            "reason": "not_applicable" if not dims else "empty_query",
+        }
+
+    hints: list[str] = []
+    for dim in dims:
+        profile = METHOD_REFERENCE_DIMENSION_PROFILES.get(dim) or {}
+        hints.extend([str(profile.get("label") or ""), str(profile.get("use") or "")])
+    expanded_query = " ".join(part for part in [base_query, str(task or ""), str(creative_stage or ""), *hints] if part).strip()
+    refs = search_references(expanded_query, dimension="method_*", top_k=max(top_k * 3, 12), novel_id=novel_id)
+    results = [
+        item for item in (refs.get("results") or [])
+        if isinstance(item, dict) and str(item.get("dimension") or "") in dims
+    ]
+    results = _unique_reference_results(results, limit=top_k)
+    if len(results) < max(1, min(3, top_k)):
+        fallback_results = _fallback_method_reference_samples(dims, query=expanded_query, limit=top_k)
+        results = _unique_reference_results(results + fallback_results, limit=top_k)
+    coverage: dict[str, int] = {}
+    for item in results:
+        dim = str(item.get("dimension") or "")
+        if dim:
+            coverage[dim] = coverage.get(dim, 0) + 1
+    return {
+        "ok": True,
+        "engine": refs.get("engine") if (refs.get("results") or []) else "local_method_anchor",
+        "index_ready": refs.get("index_ready"),
+        "query": base_query,
+        "expanded_query": expanded_query,
+        "dimensions": dims,
+        "coverage": coverage,
+        "results": results,
+        "count": len(results),
+        "notice": refs.get("notice", ""),
+    }
+
+
+def _fallback_method_reference_samples(dimensions: list[str], *, query: str, limit: int) -> list[dict[str, Any]]:
+    """Read method_* samples directly from anchor_analysis when text search under-recovers."""
+    extracted_dir = NOVEL_ACQ_DIR / "extracted"
+    if not extracted_dir.is_dir():
+        return []
+    query_text = str(query or "")
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    order = 0
+    for path in sorted(extracted_dir.glob("*/anchor_analysis.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        title = str(data.get("title") or path.parent.name)
+        for anchor in (data.get("results") or []):
+            if not isinstance(anchor, dict):
+                continue
+            anchor_label = str(anchor.get("anchor") or anchor.get("anchor_label") or "")
+            dims = anchor.get("dimensions") or {}
+            if not isinstance(dims, dict):
+                continue
+            for dim in dimensions:
+                entries = dims.get(dim) or []
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries[:4]:
+                    if not isinstance(entry, dict):
+                        continue
+                    text = str(entry.get("text") or entry.get("llm_analysis") or "").strip()
+                    if not text:
+                        continue
+                    method_hint = " ".join(str(entry.get(key, "")) for key in ("method_label", "method_use", "context"))
+                    score = _method_sample_score(query_text, text + " " + method_hint)
+                    scored.append((score, order, {
+                        "novel": title,
+                        "anchor": anchor_label,
+                        "dimension": dim,
+                        "text": text[:300],
+                        "context": str(entry.get("context") or "")[:200],
+                        "method_label": entry.get("method_label", ""),
+                        "method_use": entry.get("method_use", ""),
+                        "score": score,
+                        "matched_keywords": [],
+                        "source": "local_method_anchor",
+                    }))
+                    order += 1
+    scored.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    return [item for _score, _order, item in scored[:limit]]
+
+
+def _method_sample_score(query: str, text: str) -> int:
+    if not query:
+        return 0
+    score = 0
+    # Keep this deterministic and dependency-free; exact containment is enough
+    # because this is only a fallback after semantic/exact search under-recovers.
+    candidates = set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z_]{3,}", query))
+    for word in candidates:
+        if word and word in text:
+            score += 1
+    return score
 
 
 # 物料组装短期缓存：键=(task,chapter,query)，审查回环/同章重试命中即跳过子进程。
@@ -439,7 +682,22 @@ def assess_material_health(bundle: dict[str, Any], *, task: str, chapter: int | 
         "output_recall": len(bundle.get("output_recall") or []),
         "wiki_items": len(bundle.get("wiki_items") or []),
         "project_wiki_items": len(bundle.get("project_wiki_items") or []),
+        "methodology_context": len((bundle.get("methodology_context") or {}).get("lines") or []),
+        "creative_preflight": len((bundle.get("creative_preflight") or {}).get("checks") or []),
+        "creative_state": len((bundle.get("creative_state") or {}).get("items") or []),
+        "reference_cards": len((bundle.get("reference_cards") or {}).get("items") or []),
+        "chapter_function": 1 if (bundle.get("chapter_function") or {}).get("available") else 0,
+        "reader_experience": len((bundle.get("reader_experience") or {}).get("checks") or []),
+        "packaging_context": len((bundle.get("packaging_context") or {}).get("checks") or []),
+        "research_brief": 1 if (bundle.get("research_brief") or {}).get("needed") else 0,
+        "self_check_loop": len((bundle.get("self_check_loop") or {}).get("steps") or []),
+        "humanization_check": len((bundle.get("humanization_check") or {}).get("checks") or []),
     }
+    method_ref = bundle.get("method_reference_results") or {}
+    method_results = method_ref.get("results") if isinstance(method_ref, dict) else []
+    method_coverage = method_ref.get("coverage") if isinstance(method_ref, dict) else {}
+    signals["method_reference_results"] = len(method_results or [])
+    signals["method_reference_dimensions"] = len(method_coverage or {})
 
     reference_count = int(signals["semantic_results"]) + int(signals["five_dim_results"])
     if project_kind_value == "novel_strong":
@@ -455,8 +713,20 @@ def assess_material_health(bundle: dict[str, Any], *, task: str, chapter: int | 
             warnings.append(_material_warning("missing_character_profiles", "缺少相关人物设定，人物声音与关系连续性可能变弱。"))
         if task in {"prose", "beat_sheet", "expansion", "fix"} and reference_count < 2:
             warnings.append(_material_warning("low_reference_recall", "五维库/参考小说召回过少，将主要依赖项目结构材料与技法知识库。", {"reference_count": reference_count}))
+        if task in {"outline", "beat_sheet", "prose", "expansion", "fix"} and not signals["method_reference_results"]:
+            warnings.append(_material_warning(
+                "missing_method_reference_recall",
+                "多维参考库 method_* 创作方法维度未召回，本轮参考小说只会作为普通素材使用，方法比对/审查会降级。",
+                {"expected_dimensions": method_dimensions_for_task(project_kind_value, task)},
+            ))
         if task in {"prose", "expansion", "fix"} and chapter and chapter > 1 and not signals["cross_chapter"] and not signals["output_recall"]:
             warnings.append(_material_warning("missing_continuity_memory", "未召回前文摘要或已确认产出，章节连续性需人工重点检查。"))
+        if task in {"prose", "expansion", "fix"} and not signals["creative_state"]:
+            warnings.append(_material_warning("missing_creative_state", "未读到状态卡/伏笔账本，正文连续性与未回收钩子检查降级。"))
+        if task in {"prose", "beat_sheet", "outline"} and not signals["reader_experience"]:
+            warnings.append(_material_warning("missing_reader_experience_check", "未生成读者体验检查卡，本轮爽点/压力/余味需人工复核。"))
+        if signals["research_brief"]:
+            warnings.append(_material_warning("research_brief_needed", "本轮触发事实考据节点；缺少可靠事实材料时应标记待考据或降级虚构边界。"))
     elif project_kind_value == "short_film":
         if task in {"screenplay", "shot_list", "beat_sheet"} and not signals["chapter_outline"] and not signals["project_docs"]:
             warnings.append(_material_warning("missing_short_film_source", "缺少节拍/剧本/项目文档，短片生成会降级为用户请求和通用短片范式。"))

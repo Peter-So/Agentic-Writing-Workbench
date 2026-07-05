@@ -497,6 +497,23 @@ def _record_archive_result(
                 )
             except Exception:
                 pass
+        try:
+            from app.creative_state import update_creative_state_after_archive
+            from app.project_kinds import project_kind
+
+            state_update = update_creative_state_after_archive(
+                novel_id=novel_id,
+                project_kind=project_kind(novel_id),
+                task=task,
+                chapter=chapter,
+                content=content,
+                request_analysis=request_analysis or {},
+                archive_file=result.get("file", ""),
+            )
+            if state_update.get("updated"):
+                result["creative_state_update"] = state_update
+        except Exception as exc:
+            result["creative_state_update"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         append_message({
             "role": "system",
             "kind": "archive_result",

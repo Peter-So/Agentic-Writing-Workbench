@@ -241,11 +241,6 @@ button, input, textarea, select { font: inherit; }
   color: var(--muted);
 }
 
-.button.ghost[href] {
-  display: inline-flex;
-  align-items: center;
-}
-
 .button:disabled {
   opacity: .55;
   cursor: not-allowed;
@@ -561,7 +556,7 @@ button, input, textarea, select { font: inherit; }
 
 .five-dim-chart-body {
   display: grid;
-  grid-template-columns: minmax(136px, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   align-items: center;
 }
@@ -623,6 +618,62 @@ button, input, textarea, select { font: inherit; }
 .five-dim-legend b {
   color: var(--ink);
   font-weight: 600;
+}
+
+.five-dim-bars {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.five-dim-group {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.five-dim-bar-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(48px, 1fr) 34px;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.five-dim-bar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.five-dim-bar-track {
+  min-width: 0;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--line));
+}
+
+.five-dim-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.five-dim-bar-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  color: var(--accent);
+  font-weight: 700;
 }
 
 #projectActionStatus[data-tone="ok"] {
@@ -720,7 +771,20 @@ button, input, textarea, select { font: inherit; }
   display: none;
 }
 
-.wiki-viewer,
+.wiki-viewer {
+  grid-row: 3;
+  min-height: 0;
+  overflow: hidden;
+  margin: 12px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+
+.wiki-viewer[hidden] {
+  display: none;
+}
+
 .graph-viewer {
   grid-row: 3;
   min-height: 0;
@@ -731,7 +795,6 @@ button, input, textarea, select { font: inherit; }
   gap: 10px;
 }
 
-.wiki-viewer[hidden],
 .graph-viewer[hidden] {
   display: none;
 }
@@ -750,7 +813,12 @@ button, input, textarea, select { font: inherit; }
 }
 
 .file-editor-head h3,
-.wiki-viewer-head h3,
+.wiki-viewer-head h3 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
 .graph-viewer-head h3 {
   margin: 0;
   font-size: 16px;
@@ -942,6 +1010,7 @@ button, input, textarea, select { font: inherit; }
 }
 
 .graph-zoom-btn.zoom-in {
+  text-indent: 0;
   padding-bottom: 4px;
 }
 
@@ -1437,59 +1506,6 @@ textarea {
 
 .acceptance-row.done .button {
   opacity: .65;
-}
-
-.upgrade-card {
-  display: grid;
-  gap: 10px;
-}
-
-.upgrade-version-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.upgrade-version-row span {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 4px 8px;
-  background: var(--panel-soft);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.upgrade-release-title {
-  font-weight: 700;
-}
-
-.upgrade-notes {
-  max-height: 220px;
-  margin: 0;
-  padding: 10px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  color: var(--ink);
-  white-space: pre-wrap;
-}
-
-.upgrade-blockers {
-  display: grid;
-  gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
-  border-radius: 8px;
-  padding: 8px;
-  background: #fff7e6;
-  color: var(--amber);
-  font-size: 12px;
-}
-
-.upgrade-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .acceptance-editor {

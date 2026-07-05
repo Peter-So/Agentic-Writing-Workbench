@@ -64,7 +64,6 @@ const wikiCard = document.querySelector("#wikiCard");
 const sendBtn = document.querySelector("#sendBtn");
 const chatBtn = document.querySelector("#chatBtn");
 const doctorBtn = document.querySelector("#doctorBtn");
-const upgradeBtn = document.querySelector("#upgradeBtn");
 const chatModelSelect = document.querySelector("#chatModelSelect");
 const writingModelSelect = document.querySelector("#writingModelSelect");
 const reviewModelSelect = document.querySelector("#reviewModelSelect");
@@ -107,7 +106,6 @@ const FALLBACK_STAGE_PRESETS = {
   intervention: ["submit", "memory_lookup", "llm_analysis", "knowledge_settle", "memory_write", "policy_update", "impact_analyze", "primary_write", "primary_artifact", "related_write", "related_pending", "invocation_finalize", "pending_clear", "cleanup", "complete"],
   reference_import: ["reference_import_validate", "reference_import_save", "reference_import_analyze", "reference_import_five_dim", "reference_import_index", "reference_import_refresh"],
   archive: ["archive_submit", "archive_write", "overwrite_confirm", "overwrite", "archive_refresh", "complete"],
-  app_upgrade: ["upgrade_check", "upgrade_download", "upgrade_backup", "upgrade_apply", "upgrade_rollback", "upgrade_restart"],
 };
 const VISUAL_PROMPT_STAGES = [
   "visual_prompt_start", "visual_prompt_beat", "visual_prompt_scene", "visual_prompt_characters",
@@ -193,8 +191,8 @@ const UI_OPERATION_LABELS = {
   provider_merge: "融合生成",
   reference_import_validate: "校验上传",
   reference_import_save: "保存原文",
-  reference_import_analyze: "五维抽取",
-  reference_import_five_dim: "写入五维库",
+  reference_import_analyze: "多维抽取",
+  reference_import_five_dim: "写入多维参考库",
   reference_import_index: "重建索引",
   reference_import_refresh: "刷新盘点",
   submit: "提交中",
@@ -219,12 +217,6 @@ const UI_OPERATION_LABELS = {
   doctor_request: "发起诊断",
   doctor_check: "执行检查",
   doctor_render: "渲染诊断",
-  upgrade_check: "检查版本",
-  upgrade_download: "下载新版",
-  upgrade_backup: "创建备份",
-  upgrade_apply: "更新框架",
-  upgrade_rollback: "失败回滚",
-  upgrade_restart: "重启服务",
   trajectory_load: "加载轨迹",
   packet_generate: "生成复盘包",
   operation_done: "完成",
@@ -872,7 +864,6 @@ function setBusy(busy, label = "运行中") {
   composerBusy = Boolean(busy);
   updateComposerButtons();
   doctorBtn.disabled = busy;
-  if (upgradeBtn) upgradeBtn.disabled = busy;
   if (createProjectBtn) createProjectBtn.disabled = busy;
   if (deleteProjectBtn) deleteProjectBtn.disabled = busy || !currentProject;
   if (projectFlowBtn) projectFlowBtn.disabled = busy || !currentProject;
@@ -1153,7 +1144,9 @@ function graphNodePosition(id, index = 0) {
     const node = id;
     const x = Number(node.position?.x);
     const y = Number(node.position?.y);
-    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      return { x, y };
+    }
     id = node.id;
   }
   if (GRAPH_LAYOUT[id]) {
@@ -1188,9 +1181,10 @@ function graphPathForEdge(edge, sourcePos, targetPos) {
   if (loop) {
     const offset = edge.source === "model_review" ? 168 : 118;
     const x = Math.max(source.x, target.x) + offset;
+    const midY = (source.y + target.y) / 2;
     return {
       d: `M ${source.x} ${source.y} C ${x} ${source.y}, ${x} ${target.y}, ${target.x} ${target.y}`,
-      label: { x: x - 44, y: (source.y + target.y) / 2 },
+      label: { x: x - 44, y: midY },
       className: "loop",
     };
   }
@@ -1222,7 +1216,9 @@ function clampGraphPan(transform = graphTransform) {
   const scaledHeight = graphCanvasSize.height * transform.scale;
   const pad = GRAPH_ZOOM.padding;
   const clampAxis = (value, viewport, content) => {
-    if (content <= viewport - pad * 2) return (viewport - content) / 2;
+    if (content <= viewport - pad * 2) {
+      return (viewport - content) / 2;
+    }
     return Math.min(pad, Math.max(viewport - content - pad, value));
   };
   return {
@@ -1330,7 +1326,9 @@ function renderGraphCanvas(data, nodeById, edges) {
   defs.appendChild(marker);
   svg.appendChild(defs);
 
-  const groupBands = Array.isArray(data.group_bands) && data.group_bands.length ? data.group_bands : GRAPH_GROUP_BANDS;
+  const groupBands = Array.isArray(data.group_bands) && data.group_bands.length
+    ? data.group_bands
+    : GRAPH_GROUP_BANDS;
   for (const [label, y1, y2] of groupBands) {
     svg.appendChild(graphSvgEl("rect", {
       x: 28,
@@ -1362,11 +1360,11 @@ function renderGraphCanvas(data, nodeById, edges) {
     }));
     if (edge.label) {
       const label = String(edge.label);
-      const labelWidth = Math.max(42, label.length * 9 + 18);
+      const width = Math.max(42, label.length * 9 + 18);
       edgeLayer.appendChild(graphSvgEl("rect", {
-        x: pathData.label.x - labelWidth / 2,
+        x: pathData.label.x - width / 2,
         y: pathData.label.y - 14,
-        width: labelWidth,
+        width,
         height: 20,
         rx: 10,
         class: "graph-edge-label-bg",
@@ -1519,7 +1517,7 @@ function isProjectWikiPath(path) {
 
 function wikiKindLabel(path) {
   const name = String(path || "").split(/[\\/]/).pop() || "";
-  if (name === "project-structure.json" || name === "项目结构.md" || name === "project-structure-map.md") return "结构 Wiki";
+  if (name === "project_structure.json" || name === "项目结构.md" || name === "project-structure-map.md") return "结构 Wiki";
   if (name === "project_wiki.json" || name.startsWith("project-")) return "项目 Wiki";
   if (name === "index.json" || name.startsWith("WK-")) return "LLM Wiki";
   if (name === "README.md") return "Wiki 说明";
@@ -2479,67 +2477,92 @@ function renderProjectProgress(progress) {
   `;
 }
 
-function renderFiveDimChart(dimensions) {
-  const axes = [
-    ["scenes", "场景"],
-    ["psychology", "心理"],
-    ["characters", "角色"],
-    ["twists", "反转"],
-    ["intelligence", "智性"],
-  ];
-  const values = axes.map(([key]) => Number(dimensions?.[key] || 0));
-  const maxValue = Math.max(...values, 1);
-  const cx = 58;
-  const cy = 58;
-  const radius = 35;
-  const point = (index, ratio = 1, extra = 0) => {
-    const angle = (Math.PI * 2 * index) / axes.length - Math.PI / 2;
-    const r = radius * ratio + extra;
-    return {
-      x: cx + Math.cos(angle) * r,
-      y: cy + Math.sin(angle) * r,
-    };
-  };
-  const polygon = values.map((value, index) => {
-    const p = point(index, value / maxValue);
-    return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-  }).join(" ");
-  const rings = [0.33, 0.66, 1].map((ratio) => {
-    const pts = axes.map((_, index) => {
-      const p = point(index, ratio);
-      return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-    }).join(" ");
-    return `<polygon class="five-dim-ring" points="${pts}"></polygon>`;
-  }).join("");
-  const axisLines = axes.map(([, label], index) => {
-    const end = point(index);
-    const labelPoint = point(index, 1, 13);
-    const anchor = Math.abs(labelPoint.x - cx) < 3 ? "middle" : labelPoint.x > cx ? "start" : "end";
+const DIMENSION_LABELS = {
+  scenes: "场景",
+  psychology: "心理",
+  characters: "角色",
+  twists: "反转",
+  intelligence: "智性",
+  method_opening_promise: "开篇承诺",
+  method_motivation_chain: "动机链",
+  method_chapter_function: "章节功能",
+  method_reader_experience: "读者体验",
+  method_reference_decomposition: "参考拆解",
+  method_research_detail: "事实细节",
+  method_humanization: "人味表达",
+};
+
+const DIMENSION_ORDER = [
+  "scenes",
+  "psychology",
+  "characters",
+  "twists",
+  "intelligence",
+  "method_opening_promise",
+  "method_motivation_chain",
+  "method_chapter_function",
+  "method_reader_experience",
+  "method_reference_decomposition",
+  "method_research_detail",
+  "method_humanization",
+];
+
+function dimensionLabel(key) {
+  return DIMENSION_LABELS[key] || key.replace(/^method_/, "").replaceAll("_", " ");
+}
+
+function dimensionGroupLabel(key) {
+  if (key.startsWith("method_")) return "方法维度";
+  if (["scenes", "psychology", "characters", "twists", "intelligence"].includes(key)) return "基础维度";
+  return "扩展维度";
+}
+
+function orderedDimensions(dimensions) {
+  const entries = Object.entries(dimensions || {})
+    .map(([key, value]) => [key, Number(value || 0)])
+    .filter(([, value]) => value > 0);
+  const orderIndex = new Map(DIMENSION_ORDER.map((key, index) => [key, index]));
+  return entries.sort((a, b) => {
+    const ai = orderIndex.has(a[0]) ? orderIndex.get(a[0]) : 1000;
+    const bi = orderIndex.has(b[0]) ? orderIndex.get(b[0]) : 1000;
+    if (ai !== bi) return ai - bi;
+    return b[1] - a[1] || a[0].localeCompare(b[0]);
+  });
+}
+
+function renderMultiDimChart(dimensions) {
+  const entries = orderedDimensions(dimensions);
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+  const groupMax = entries.reduce((acc, [key, value]) => {
+    const group = dimensionGroupLabel(key);
+    acc[group] = Math.max(acc[group] || 0, value);
+    return acc;
+  }, {});
+  let lastGroup = "";
+  const rows = entries.map(([key, value]) => {
+    const group = dimensionGroupLabel(key);
+    const groupHead = group !== lastGroup
+      ? `<div class="five-dim-group">${escapeHtml(group)}</div>`
+      : "";
+    lastGroup = group;
+    const ratio = Math.max(3, Math.round((value / Math.max(groupMax[group] || 0, 1)) * 100));
     return `
-      <line class="five-dim-axis" x1="${cx}" y1="${cy}" x2="${end.x.toFixed(1)}" y2="${end.y.toFixed(1)}"></line>
-      <text class="five-dim-label" x="${labelPoint.x.toFixed(1)}" y="${labelPoint.y.toFixed(1)}" text-anchor="${anchor}">${escapeHtml(label)}</text>
+      ${groupHead}
+      <div class="five-dim-bar-row" title="${escapeHtml(`${group} / ${dimensionLabel(key)}：${value} 段`)}">
+        <span class="five-dim-bar-label">${escapeHtml(dimensionLabel(key))}</span>
+        <span class="five-dim-bar-track"><i style="width:${ratio}%"></i></span>
+        <b>${escapeHtml(value)}</b>
+      </div>
     `;
   }).join("");
-  const legend = axes.map(([key, label]) => `
-    <span><b>${escapeHtml(label)}</b>${escapeHtml(dimensions?.[key] || 0)}</span>
-  `).join("");
   return `
     <div class="five-dim-chart">
       <div class="five-dim-chart-head">
-        <span>五维度图表</span>
-        <strong>峰值 ${escapeHtml(maxValue)}</strong>
+        <span>多维度图表</span>
+        <strong>${escapeHtml(entries.length)} 项 / ${escapeHtml(total)} 段</strong>
       </div>
       <div class="five-dim-chart-body">
-        <svg viewBox="-12 -8 140 132" role="img" aria-label="五维库维度分布图">
-          ${rings}
-          ${axisLines}
-          <polygon class="five-dim-area" points="${polygon}"></polygon>
-          ${values.map((value, index) => {
-            const p = point(index, value / maxValue);
-            return `<circle class="five-dim-dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4"></circle>`;
-          }).join("")}
-        </svg>
-        <div class="five-dim-legend">${legend}</div>
+        <div class="five-dim-bars" role="img" aria-label="多维参考库维度分布图">${rows}</div>
       </div>
     </div>
   `;
@@ -2549,10 +2572,10 @@ function renderProjectInventory(inventory) {
   if (!projectInventory) return;
   const skills = inventory?.skills || {};
   const refs = inventory?.reference_novels || {};
-  const five = inventory?.five_dim || {};
-  const dimensions = five.dimensions || {};
-  const dimText = Object.entries(dimensions)
-    .map(([name, count]) => `${name}: ${count}`)
+  const multi = inventory?.five_dim || {};
+  const dimensions = multi.dimensions || {};
+  const dimText = orderedDimensions(dimensions)
+    .map(([name, count]) => `${dimensionGroupLabel(name)} / ${dimensionLabel(name)} (${name}): ${count}`)
     .join("\n");
   const refTitle = [
     `清单：${refs.listed_count || 0}`,
@@ -2561,10 +2584,10 @@ function renderProjectInventory(inventory) {
     refs.reference_dir ? `目录：${refs.reference_dir}` : "",
   ].join("\n");
   const fiveTitle = [
-    `分析文件：${five.analysis_file_count || 0}`,
-    `锚点文件：${five.anchor_file_count || 0}`,
-    `锚点：${five.anchor_count || 0}`,
-    `片段：${five.segment_count || 0}`,
+    `分析文件：${multi.analysis_file_count || 0}`,
+    `锚点文件：${multi.anchor_file_count || 0}`,
+    `锚点：${multi.anchor_count || 0}`,
+    `片段：${multi.segment_count || 0}`,
     dimText ? `维度：\n${dimText}` : "",
   ].filter(Boolean).join("\n");
   const skillTitle = [
@@ -2583,9 +2606,9 @@ function renderProjectInventory(inventory) {
   const rows = [
     { label: "技能", value: skills.count || 0, unit: "张", title: skillTitle || "暂无技能卡" },
     { label: "参考小说", value: refs.count || 0, unit: "本", title: refTitle, action: "import_reference" },
-    { label: "五维库", value: five.segment_count || five.anchor_count || 0, unit: five.segment_count ? "段" : "项", title: fiveTitle },
+    { label: "多维参考库", value: multi.segment_count || multi.anchor_count || 0, unit: multi.segment_count ? "段" : "项", title: fiveTitle },
   ];
-  const chart = Object.keys(dimensions).length ? renderFiveDimChart(dimensions) : "";
+  const chart = Object.keys(dimensions).length ? renderMultiDimChart(dimensions) : "";
   projectInventory.innerHTML = `
     <div class="project-inventory-grid">
       ${rows.map((item) => `
@@ -2593,7 +2616,7 @@ function renderProjectInventory(inventory) {
           <span>${escapeHtml(item.label)}</span>
           <strong class="${item.action === "import_reference" ? "with-action" : ""}">
             <span>${escapeHtml(item.value)}${escapeHtml(item.unit)}</span>
-            ${item.action === "import_reference" ? `<button class="inventory-action-btn" type="button" data-import-reference title="导入 TXT 小说到参考小说库，并执行五维抽取与索引重建。">导入</button>` : ""}
+            ${item.action === "import_reference" ? `<button class="inventory-action-btn" type="button" data-import-reference title="导入 TXT 小说到参考小说库，并执行多维抽取与索引重建。">导入</button>` : ""}
           </strong>
         </div>
       `).join("")}
@@ -2677,7 +2700,7 @@ async function importReferenceNovel(file) {
     setProjectActionStatus(warnings.length ? "导入完成，但部分索引步骤有警告。" : "参考小说导入完成。", warnings.length ? "warn" : "");
     addMessage(
       "system",
-      `已导入《${doneData?.title || file.name}》。${warnings.length ? `警告：${warnings.map((item) => item.message).join("；")}` : "五维库与索引已刷新。"}`,
+      `已导入《${doneData?.title || file.name}》。${warnings.length ? `警告：${warnings.map((item) => item.message).join("；")}` : "多维参考库与索引已刷新。"}`,
       "参考小说",
     );
   } catch (error) {
@@ -2707,6 +2730,7 @@ function renderSop() {
     sopCard.innerHTML = `
       <div><strong>LLM 自动判断任务</strong></div>
       <div class="muted-line">请求理解节点将结合项目结构和当前状态选择流程。</div>
+      <div class="muted-line">创作流会按阶段启用方法论、状态卡、增强卡和材料裁剪。</div>
     `;
     return;
   }
@@ -2716,6 +2740,7 @@ function renderSop() {
     <div class="muted-line">协作：${modeText(sop.mode)}</div>
     <div class="muted-line">确认门：${sop.confirmation_gate || "material_selection"}</div>
     <div class="muted-line">硬规则：${(sop.hard_rules || []).length} 条</div>
+    <div class="muted-line">增强：方法论 · 状态卡 · 参考拆解 · 读者体验 · 自检</div>
   `;
 }
 
@@ -3828,13 +3853,19 @@ async function runProviderPlainChat(message) {
 }
 
 async function runPlainChatMessage(message, options = {}) {
+  message = promptText(message);
+  if (!message) {
+    updateComposerButtons();
+    return;
+  }
   const echoUser = options.echoUser !== false;
   if (echoUser) {
     addMessage("user", message, "聊天", { persist: false });
     persistMessage({ role: "user", kind: "text", text: message, meta: "聊天", track: "normal" });
   }
-  if (options.clearInput !== false && messageInput.value.trim() === message) {
+  if (options.clearInput !== false && promptText() === message) {
     messageInput.value = "";
+    updateComposerButtons();
   }
   if (aiToggle.checked) {
     await runProviderPlainChat(message);
@@ -3873,8 +3904,11 @@ async function runPlainChatMessage(message, options = {}) {
 }
 
 async function runPlainChat() {
-  const message = messageInput.value.trim();
-  if (!message) return;
+  const message = promptText();
+  if (!message) {
+    updateComposerButtons();
+    return;
+  }
   if (!aiToggle.checked && !requireModels(["chat"], {
     label: "已选择模型，继续聊天",
     retry: () => runPlainChatMessage(message, { echoUser: true, clearInput: true }),
@@ -4471,6 +4505,16 @@ async function runDraftStream(payload) {
       } else if (ev.event === "provider") {
         if (ev.data.type === "provider_init") providerGrid = buildProviderGrid(ev.data.order || []);
         if (ev.data.type === "provider") updateProviderGrid(providerGrid, ev.data);
+      } else if (ev.event === "stage") {
+        applyFlowProgress({ timer, doneNodes, stages }, ev.data || {});
+        schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
+          invocation_id: invocationId,
+          task: payload.task,
+          chapter: payload.chapter,
+          track: payload.track,
+          status: "running",
+          source: "draft_stream_stage",
+        }));
       } else if (ev.event === "node") {
         const node = ev.data.node;
         rememberFlowTask(ev.data.request_analysis);
@@ -4649,191 +4693,6 @@ async function runDoctor() {
   }
 }
 
-async function checkAppUpgrade() {
-  setBusy(true, "检查更新");
-  const flow = createOperationFlow(workflowStages("app_upgrade"));
-  try {
-    flow.step("upgrade_check");
-    const res = await fetch("/api/app-upgrade/check", { cache: "no-store" });
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "检查更新失败");
-    flow.doneNodes.add("upgrade_check");
-    renderUpgradeCard(data);
-    flow.done();
-  } catch (error) {
-    flow.fail();
-    addMessage("system", `检查更新失败：${error}`, "版本更新");
-  } finally {
-    setBusy(false);
-  }
-}
-
-function renderUpgradeCard(data = {}) {
-  const release = data.release || {};
-  const item = document.createElement("article");
-  item.className = "message assistant";
-  const title = document.createElement("div");
-  title.className = "message-title";
-  title.textContent = data.has_update ? "发现新版本" : "当前已是最新版本";
-  item.appendChild(title);
-
-  const body = document.createElement("div");
-  body.className = "upgrade-card";
-  const activeTasks = data.active_tasks || {};
-  const blockers = Array.isArray(activeTasks.blockers) ? activeTasks.blockers : [];
-  body.innerHTML = `
-    <div class="upgrade-version-row">
-      <span>当前：${escapeHtml(data.current_version || "未知")}</span>
-      <span>最新：${escapeHtml(data.latest_version || "未知")}</span>
-    </div>
-    <div class="upgrade-release-title">${escapeHtml(release.name || data.latest_version || "Release")}</div>
-    <pre class="upgrade-notes">${escapeHtml(release.body || "暂无发布说明。")}</pre>
-    <div class="upgrade-safety muted-line">升级前会自动备份；不会覆盖 .env、projects、data、logs、tmp、backups 等用户资产。</div>
-    ${blockers.length ? `<div class="upgrade-blockers">
-      <strong>暂不能升级：存在 ${blockers.length} 个未完成任务</strong>
-      ${blockers.slice(0, 5).map((item) => `<div>${escapeHtml(upgradeBlockerText(item))}</div>`).join("")}
-    </div>` : ""}
-  `;
-  if (data.has_update) {
-    const actions = document.createElement("div");
-    actions.className = "upgrade-actions";
-    const confirmBtn = document.createElement("button");
-    confirmBtn.className = "button danger";
-    confirmBtn.type = "button";
-    confirmBtn.textContent = "确认升级";
-    confirmBtn.disabled = blockers.length > 0;
-    confirmBtn.title = blockers.length ? "请先完成、归档或取消未完成任务后再升级。" : "备份框架文件并升级到最新版本。";
-    confirmBtn.addEventListener("click", () => startAppUpgrade(data.latest_version || ""));
-    actions.appendChild(confirmBtn);
-    if (release.html_url) {
-      const link = document.createElement("a");
-      link.className = "button ghost";
-      link.href = release.html_url;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = "查看 Release";
-      actions.appendChild(link);
-    }
-    body.appendChild(actions);
-  }
-  item.appendChild(body);
-  messagesEl.appendChild(item);
-  scrollMessagesToBottom();
-}
-
-function upgradeBlockerText(item = {}) {
-  const typeLabel = {
-    provider_job: "网页模型任务",
-    invocation: "创作任务",
-    pending_intent: "待恢复任务",
-  }[item.type] || "任务";
-  const id = item.id || item.invocation_id || "";
-  const project = item.novel_id ? `项目 ${item.novel_id}` : "";
-  const status = item.status ? `状态 ${item.status}` : "";
-  const task = item.task ? `类型 ${item.task}` : "";
-  return [typeLabel, project, id, status, task].filter(Boolean).join("｜");
-}
-
-async function startAppUpgrade(version = "") {
-  const confirmed = window.confirm("确认升级到最新版本？升级会先备份框架文件，完成后自动重启服务。");
-  if (!confirmed) return;
-  setBusy(true, "升级中");
-  const flow = createOperationFlow(workflowStages("app_upgrade"));
-  flow.step("upgrade_download");
-  try {
-    const payload = {
-      version,
-      host: location.hostname || "127.0.0.1",
-      port: Number(location.port || 7861),
-    };
-    const res = await fetch("/api/app-upgrade/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "启动升级失败");
-    addMessage("system", "升级任务已启动，页面会在服务重启后自动刷新。", "版本更新");
-    await pollAppUpgrade(flow);
-  } catch (error) {
-    flow.fail();
-    addMessage("system", `升级失败：${error}`, "版本更新");
-    setBusy(false);
-  }
-}
-
-async function pollAppUpgrade(flow) {
-  let restartExpected = false;
-  const deadline = Date.now() + 8 * 60 * 1000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
-      const data = await readJsonResponse(res);
-      assertApiOk(res, data, "读取升级状态失败");
-      updateUpgradeFlow(flow, data);
-      if (data.status === "failed") {
-        flow.fail();
-        setBusy(false);
-        addMessage("system", data.message || "升级失败。", "版本更新");
-        return;
-      }
-      if (data.status === "restarting") {
-        restartExpected = true;
-      }
-    } catch (error) {
-      if (restartExpected) {
-        await waitForServiceRestore();
-        return;
-      }
-    }
-    await delay(1500);
-  }
-  flow.fail();
-  setBusy(false);
-  addMessage("system", "升级等待超时，请手动刷新页面或检查服务。", "版本更新");
-}
-
-function updateUpgradeFlow(flow, data = {}) {
-  const stageMap = {
-    queued: "upgrade_check",
-    download: "upgrade_download",
-    backup: "upgrade_backup",
-    apply: "upgrade_apply",
-    rollback: "upgrade_rollback",
-    restart: "upgrade_restart",
-  };
-  const node = stageMap[data.stage] || "upgrade_apply";
-  flow.step(node);
-  if (data.backup_dir) {
-    setProjectActionStatus(`升级状态：${data.message || data.stage}；备份：${data.backup_dir}`);
-  } else {
-    setProjectActionStatus(`升级状态：${data.message || data.stage}`);
-  }
-}
-
-async function waitForServiceRestore() {
-  setProjectActionStatus("服务正在重启，等待恢复...");
-  const deadline = Date.now() + 90 * 1000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
-      if (res.ok) {
-        window.location.reload();
-        return;
-      }
-    } catch {
-      // Keep waiting while the old process exits and the restart helper starts the new one.
-    }
-    await delay(1800);
-  }
-  setBusy(false);
-  addMessage("system", "服务重启等待超时，请手动刷新或重新启动。", "版本更新");
-}
-
-function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 function groupedDoctorChecks(checks) {
   const framework = [];
   const others = [];
@@ -4914,8 +4773,11 @@ function renderDoctorCard(check) {
 
 composer.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const message = messageInput.value.trim();
-  if (!message) return;
+  const message = promptText();
+  if (!message) {
+    updateComposerButtons();
+    return;
+  }
   if (!requireModels(["chat", "writing", "review"], {
     label: "已选择模型，继续创作",
     retry: () => {
@@ -4934,6 +4796,7 @@ composer.addEventListener("submit", async (event) => {
   clearAcceptanceControls();
   addMessage("user", message, "创作", { persist: true });
   messageInput.value = "";
+  updateComposerButtons();
   const payload = {
     message,
     mode: "draft",
@@ -4990,14 +4853,13 @@ projectIdInput.addEventListener("keydown", (event) => {
 });
 deleteProjectBtn.addEventListener("click", deleteCurrentProject);
 doctorBtn.addEventListener("click", runDoctor);
-if (upgradeBtn) {
-  upgradeBtn.addEventListener("click", checkAppUpgrade);
-}
 if (chatBtn) {
   chatBtn.addEventListener("click", runPlainChat);
 }
-messageInput.addEventListener("input", updateComposerButtons);
-updateComposerButtons();
+if (messageInput) {
+  messageInput.addEventListener("input", updateComposerButtons);
+  updateComposerButtons();
+}
 closeFileBtn.addEventListener("click", showConversation);
 if (closeWikiBtn) {
   closeWikiBtn.addEventListener("click", showConversation);

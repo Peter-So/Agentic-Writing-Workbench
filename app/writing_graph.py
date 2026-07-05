@@ -52,6 +52,9 @@ GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
     "context_followup": "网页模型固定会话续问时复用上下文。",
     "material_profile": "按阶段 profile 切换材料范围：前期规划只取结构材料、Wiki 和技法；正文阶段补充大纲、前情、人物、风格、参考小说和连续性记忆。",
     "draft_assemble": "按项目 Wiki、章节、人物、前情、技法与限制精确组装材料；生成材料索引，精修任务会携带正文文件行号与待改片段。",
+    "creative_state": "读取状态卡、短片状态卡和伏笔账本；缺失时降级，不阻塞创作。",
+    "methodology_context": "从公共创作方法论知识库匹配阶段方法、Prompt 契约、研究和风格法则。",
+    "creative_enhancements": "生成参考拆解卡、章节/场次功能、读者体验、卖点包装、研究、自检和去 AI 味检查。",
     "prompt_refine": "把材料与目标整理成可执行的专业任务单。",
     "provider_route": "判断是否进入网页模型 provider 分支。",
     "provider_fanout": "调用已勾选网页 provider，收集外部候选内容。",
@@ -89,6 +92,9 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
     "need_audit": "创作主线",
     "context_followup": "创作主线",
     "draft_assemble": "创作主线",
+    "creative_state": "创作主线",
+    "methodology_context": "创作主线",
+    "creative_enhancements": "创作主线",
     "material_profile": "创作主线",
     "prompt_refine": "创作主线",
     "provider_route": "创作主线",
@@ -115,10 +121,12 @@ PROJECT_KIND_GRAPH_NOTES: dict[str, list[str]] = {
         "概念、基础设定、世界观、人物、情节属于 planning_light 精简流：不写正文，材料聚焦结构文件、项目 Wiki 和技法知识库，规则预审轻量跳过。",
         "大纲属于 planning_archive 精简归档流：聚焦大纲、人物、世界观、情节和章节摘要，用户确认后进入显式归档。",
         "正文、扩写、修复属于 full_generation 完整正文流：补充大纲、前情、人物、风格、参考小说、连续性记忆；fix/expansion 会携带正文文件行号和待改片段。",
+        "方法论、状态卡、参考拆解、章节功能、读者体验、研究节点、自检和去 AI 味检查会作为增强卡进入材料区，并由阶段 profile 裁剪。",
         "章节正文、大纲、人物、设定等写回动作在用户确认后由归档流程执行，不在 LangGraph 内静默覆盖文件。",
     ],
     "short_film": [
         "电影脚本项目复用主创作链路，剧本、节拍、分镜提示词和生图由项目类型能力补充。",
+        "短片流程会显示场次功能、观众体验、事实考据、自检和可拍性/去 AI 味检查。",
         "规则预审对短片类型通常降级为轻量检查，重点由需求审计、模型审查和用户确认兜底。",
     ],
     "generic": [
@@ -145,8 +153,11 @@ GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
     "need_audit": (1000, 654),
     "material_profile": (760, 760),
     "draft_assemble": (1000, 760),
-    "prompt_refine": (1000, 866),
-    "provider_route": (1000, 972),
+    "creative_state": (760, 866),
+    "methodology_context": (1000, 866),
+    "creative_enhancements": (1200, 866),
+    "prompt_refine": (1000, 972),
+    "provider_route": (1000, 1078),
     "provider_fanout": (760, 1088),
     "provider_confirm_gate": (760, 1194),
     "generate": (1200, 1088),
@@ -181,18 +192,26 @@ PROJECT_WIKI_FLOW_EDGES = [
     {"source": "project_wiki_archive", "target": "__end__", "label": "", "conditional": False},
 ]
 
+CREATIVE_ENHANCEMENT_FLOW_NODES = ["creative_state", "methodology_context", "creative_enhancements"]
+CREATIVE_ENHANCEMENT_FLOW_EDGES = [
+    {"source": "draft_assemble", "target": "creative_state", "label": "读状态", "conditional": False},
+    {"source": "creative_state", "target": "methodology_context", "label": "匹配方法", "conditional": False},
+    {"source": "methodology_context", "target": "creative_enhancements", "label": "生成增强卡", "conditional": False},
+    {"source": "creative_enhancements", "target": "material_profile", "label": "交给阶段裁剪", "conditional": False},
+    {"source": "material_profile", "target": "prompt_refine", "label": "输出任务单", "conditional": False},
+]
+
 NOVEL_STAGE_FLOW_NODES = ["novel_stage_route", "material_profile"]
 NOVEL_STAGE_FLOW_EDGES = [
     {"source": "request_analyze", "target": "novel_stage_route", "label": "阶段标识", "conditional": False},
-    {"source": "novel_stage_route", "target": "material_profile", "label": "材料策略", "conditional": False},
-    {"source": "material_profile", "target": "draft_assemble", "label": "按阶段裁剪", "conditional": False},
+    {"source": "novel_stage_route", "target": "draft_assemble", "label": "阶段材料组装", "conditional": False},
 ]
 
 PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
     "novel_strong": {
         "visible": None,
-        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, *NOVEL_STAGE_FLOW_NODES],
-        "extra_edges": [*PROJECT_WIKI_FLOW_EDGES, *NOVEL_STAGE_FLOW_EDGES],
+        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, *NOVEL_STAGE_FLOW_NODES, *CREATIVE_ENHANCEMENT_FLOW_NODES],
+        "extra_edges": [*PROJECT_WIKI_FLOW_EDGES, *NOVEL_STAGE_FLOW_EDGES, *CREATIVE_ENHANCEMENT_FLOW_EDGES],
         "layout": {},
         "group_bands": GRAPH_BASE_BANDS,
     },
@@ -202,9 +221,10 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "prompt_refine", "provider_route", "provider_fanout", "provider_confirm_gate",
             "generate", "pre_review", "model_review", "draft_finalize",
         },
-        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, "visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
+        "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, *CREATIVE_ENHANCEMENT_FLOW_NODES, "material_profile", "visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
         "extra_edges": [
             *PROJECT_WIKI_FLOW_EDGES,
+            *CREATIVE_ENHANCEMENT_FLOW_EDGES,
             {"source": "draft_finalize", "target": "visual_prompt", "label": "需分镜/生图", "conditional": True},
             {"source": "visual_prompt", "target": "image_plan", "label": "", "conditional": False},
             {"source": "image_plan", "target": "image_generate", "label": "", "conditional": False},
@@ -951,6 +971,20 @@ def node_draft_assemble(state: WritingState) -> WritingState:
     bundle["model_preferences"] = state.get("model_preferences") or {}
     actions = list(state.get("actions") or [])
     actions.append("assemble_material")
+    try:
+        from langgraph.config import get_stream_writer
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+
+    def emit_stage(stage: str, status: str = "running", **details: Any) -> None:
+        if not writer:
+            return
+        try:
+            writer({"type": "stage", "stage": stage, "status": status, **details})
+        except Exception:
+            pass
+
     if data.get("fallback"):
         actions.append(f"assemble_fallback({(data.get('fallback') or {}).get('reason')})")
     elif data.get("generic_branch"):
@@ -1061,6 +1095,121 @@ def node_draft_assemble(state: WritingState) -> WritingState:
     except Exception as exc:
         actions.append(f"project_assets_failed({type(exc).__name__})")
 
+    # 创作状态卡/伏笔账本：只在创作链路注入，后续由阶段 profile 决定是否进入本轮 prompt。
+    creative_state: dict[str, Any] = {}
+    emit_stage("creative_state", "running")
+    try:
+        from app.creative_state import load_creative_state
+
+        creative_state = load_creative_state(
+            state.get("novel_id"),
+            project_kind=bundle.get("project_kind") or state.get("project_kind"),
+            task=task,
+        )
+        if creative_state.get("available"):
+            bundle["creative_state"] = creative_state
+            actions.append(f"creative_state({len(creative_state.get('items') or [])})")
+        emit_stage("creative_state", "done", available=bool(creative_state.get("available")), count=len(creative_state.get("items") or []))
+    except Exception as exc:
+        creative_state = {}
+        actions.append(f"creative_state_failed({type(exc).__name__})")
+        emit_stage("creative_state", "done", available=False, error=type(exc).__name__)
+
+    # 公共创作方法论与前置检查：方法层只提供流程法则和检查点，不提供剧情片段。
+    emit_stage("methodology_context", "running")
+    try:
+        from app.novel_methodology import creative_preflight, methodology_context_for_task
+
+        methodology_ctx = methodology_context_for_task(
+            query="\n".join(filter(None, [
+                assembly_query,
+                str(analysis.get("generator_instruction") or ""),
+                str(analysis.get("reason") or ""),
+            ])),
+            project_kind=bundle.get("project_kind") or state.get("project_kind") or "",
+            task=task,
+            creative_stage=str(analysis.get("creative_stage") or ""),
+            max_lines=6,
+        )
+        if methodology_ctx.get("ok"):
+            bundle["methodology_context"] = methodology_ctx
+            actions.append(f"methodology({methodology_ctx.get('mode')},{len(methodology_ctx.get('lines') or [])})")
+        preflight = creative_preflight(
+            query=assembly_query or message,
+            project_kind=bundle.get("project_kind") or state.get("project_kind") or "",
+            task=task,
+            creative_stage=str(analysis.get("creative_stage") or ""),
+            material_signals=(creative_state.get("signals") if isinstance(creative_state, dict) else {}) or {},
+        )
+        if preflight.get("checks"):
+            bundle["creative_preflight"] = preflight
+            actions.append(f"creative_preflight({preflight.get('level')},{len(preflight.get('checks') or [])})")
+        emit_stage(
+            "methodology_context",
+            "done",
+            laws=len((bundle.get("methodology_context") or {}).get("lines") or []),
+            checks=len((bundle.get("creative_preflight") or {}).get("checks") or []),
+        )
+    except Exception as exc:
+        actions.append(f"methodology_failed({type(exc).__name__})")
+        emit_stage("methodology_context", "done", error=type(exc).__name__)
+
+    # 多维参考库方法维度召唤：按任务/阶段主动检索 method_*，供拆解卡、材料健康和审查共用。
+    emit_stage("methodology_context", "running", detail="method_reference_recall")
+    try:
+        method_refs = writing_tools.collect_method_reference_materials(
+            "\n".join(filter(None, [
+                assembly_query or message,
+                str(analysis.get("generator_instruction") or ""),
+                str(analysis.get("reason") or ""),
+            ])),
+            project_kind_value=bundle.get("project_kind") or state.get("project_kind") or "",
+            task=task,
+            creative_stage=str(analysis.get("creative_stage") or ""),
+            novel_id=state.get("novel_id"),
+            top_k=8,
+        )
+        bundle["method_reference_results"] = method_refs
+        if method_refs.get("results"):
+            actions.append(
+                "method_reference_recall("
+                f"{method_refs.get('engine')},{len(method_refs.get('results') or [])},"
+                f"dims={len(method_refs.get('coverage') or {})})"
+            )
+        emit_stage(
+            "methodology_context",
+            "done",
+            method_refs=len(method_refs.get("results") or []),
+            method_dims=len(method_refs.get("coverage") or {}),
+        )
+    except Exception as exc:
+        bundle["method_reference_results"] = {"ok": False, "results": [], "error": f"{type(exc).__name__}: {exc}"}
+        actions.append(f"method_reference_recall_failed({type(exc).__name__})")
+        emit_stage("methodology_context", "done", method_refs=0, error=type(exc).__name__)
+
+    emit_stage("creative_enhancements", "running")
+    try:
+        from app.creative_enhancements import build_creative_enhancements
+
+        enhancements = build_creative_enhancements(
+            project_kind=bundle.get("project_kind") or state.get("project_kind") or "",
+            task=task,
+            query=assembly_query or message,
+            analysis=analysis,
+            bundle=bundle,
+        )
+        for key in enhancements.get("keys") or []:
+            value = enhancements.get(key)
+            if value:
+                bundle[key] = value
+        if enhancements.get("keys"):
+            actions.append("creative_enhancements(" + ",".join(enhancements.get("keys") or []) + ")")
+        emit_stage("creative_enhancements", "done", keys=enhancements.get("keys") or [])
+    except Exception as exc:
+        actions.append(f"creative_enhancements_failed({type(exc).__name__})")
+        emit_stage("creative_enhancements", "done", error=type(exc).__name__)
+
+    emit_stage("material_profile", "running")
     try:
         bundle, material_profile = apply_stage_material_profile(
             bundle,
@@ -1074,9 +1223,16 @@ def node_draft_assemble(state: WritingState) -> WritingState:
                 f"{material_profile.get('stage')},"
                 f"removed={len(material_profile.get('removed') or [])})"
             )
+        emit_stage(
+            "material_profile",
+            "done",
+            stage=material_profile.get("stage") or "",
+            removed=len(material_profile.get("removed") or []),
+        )
     except Exception as exc:
         bundle["material_profile"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         actions.append(f"material_profile_failed({type(exc).__name__})")
+        emit_stage("material_profile", "done", error=type(exc).__name__)
 
     try:
         material_health = writing_tools.assess_material_health(bundle, task=task, chapter=chapter)
@@ -1290,6 +1446,10 @@ def _merge_provider_outputs(bundle: dict, answers: list[dict], actions: list[str
         f"人物：{materials.get('character_profiles','')}",
         f"约束：{materials.get('constraints','')}",
         f"项目文档：{materials.get('project_docs','')}",
+        f"当前状态：{(bundle.get('creative_state') or {}).get('text', '')}",
+        f"方法论：{(bundle.get('methodology_context') or {}).get('text', '')}",
+        f"前置检查：{(bundle.get('creative_preflight') or {}).get('text', '')}",
+        f"增强检查：{_enhancement_brief(bundle)}",
     ]))[:4000]
     technique_context: dict[str, Any] = {}
     try:
@@ -1374,6 +1534,15 @@ def node_pre_review(state: WritingState) -> WritingState:
     return {"pre_review": pr, "actions": actions}
 
 
+def _enhancement_brief(bundle: dict[str, Any]) -> str:
+    try:
+        from app.creative_enhancements import format_enhancement_blocks
+
+        return format_enhancement_blocks(bundle)[:1800]
+    except Exception:
+        return ""
+
+
 def node_model_review(state: WritingState) -> WritingState:
     bundle = state.get("bundle") or {}
     materials = bundle.get("materials") or {}
@@ -1427,6 +1596,20 @@ def node_model_review(state: WritingState) -> WritingState:
             draft=state.get("draft", ""),
             strategy=strategy,
             technique_context=technique_context,
+            creative_preflight=bundle.get("creative_preflight") or {},
+            methodology_context=bundle.get("methodology_context") or {},
+            creative_enhancements={
+                key: bundle.get(key) or {}
+                for key in (
+                    "reference_cards",
+                    "chapter_function",
+                    "reader_experience",
+                    "packaging_context",
+                    "research_brief",
+                    "self_check_loop",
+                    "humanization_check",
+                )
+            },
         )
         actions.append(f"model_review({review.get('model')})")
         return {"review_strategy": strategy, "model_review": review, "actions": actions}

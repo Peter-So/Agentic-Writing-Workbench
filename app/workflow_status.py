@@ -7,8 +7,9 @@ from typing import Any
 STAGE_PRESETS: dict[str, list[str]] = {
     "draft": [
         "request_analyze", "need_audit", "draft_assemble", "prompt_refine",
-        "provider_route", "generate", "pre_review", "model_review",
-        "draft_finalize", "user_confirm",
+        "creative_state", "methodology_context", "creative_enhancements",
+        "material_profile", "provider_route", "generate", "pre_review",
+        "model_review", "draft_finalize", "user_confirm",
     ],
     "provider": [
         "provider_fanout", "provider_confirm_gate", "provider_consensus",
@@ -46,6 +47,10 @@ STAGE_LABELS: dict[str, str] = {
     "need_audit": "需求审计",
     "context_followup": "上下文续问",
     "draft_assemble": "材料装配",
+    "creative_state": "状态卡/伏笔",
+    "methodology_context": "方法论匹配",
+    "creative_enhancements": "增强卡片",
+    "material_profile": "阶段裁剪",
     "prompt_refine": "专业提问",
     "provider_route": "路由决策",
     "provider_fanout": "网页模型",
@@ -76,7 +81,7 @@ STAGE_LABELS: dict[str, str] = {
     "reference_import_validate": "校验上传",
     "reference_import_save": "保存原文",
     "reference_import_analyze": "五维抽取",
-    "reference_import_five_dim": "写入五维库",
+    "reference_import_five_dim": "写入多维参考库",
     "reference_import_index": "重建索引",
     "reference_import_refresh": "刷新盘点",
     "archive_submit": "提交归档",
