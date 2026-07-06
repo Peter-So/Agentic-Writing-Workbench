@@ -18,6 +18,7 @@ class ProviderJob:
         self.format_for_writing = format_for_writing
         self.done = False
         self.result: dict[str, Any] | None = None
+        self.updated_at = self.created_at
         self.providers: dict[str, dict[str, Any]] = {
             pid: {"provider": pid, "status": "queued", "elapsed_seconds": 0.0}
             for pid in provider_ids
@@ -28,6 +29,7 @@ class ProviderJob:
         self._t0[provider_id] = perf_counter()
         if provider_id in self.providers:
             self.providers[provider_id]["status"] = "running"
+        self.updated_at = datetime.now().isoformat(timespec="seconds")
 
     def mark_done(self, provider_id: str, status: str, result: str | None = None,
                   name: str | None = None) -> None:
@@ -40,6 +42,7 @@ class ProviderJob:
                 self.providers[provider_id]["result"] = result
             if name is not None:
                 self.providers[provider_id]["name"] = name
+        self.updated_at = datetime.now().isoformat(timespec="seconds")
 
     def snapshot(self) -> dict[str, Any]:
         live: list[dict[str, Any]] = []
@@ -52,6 +55,7 @@ class ProviderJob:
             "job_id": self.job_id,
             "done": self.done,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "prompt_hash": self.prompt_hash,
             "format_for_writing": self.format_for_writing,
             "providers": live,
@@ -75,16 +79,8 @@ class ProviderJobManager:
     def get(self, job_id: str) -> ProviderJob | None:
         return self._jobs.get(job_id)
 
-    def active_jobs(self) -> list[dict[str, Any]]:
-        active: list[dict[str, Any]] = []
-        for job in self._jobs.values():
-            snapshot = job.snapshot()
-            if not snapshot.get("done") or any(
-                item.get("status") in {"queued", "running"}
-                for item in snapshot.get("providers") or []
-            ):
-                active.append(snapshot)
-        return active
+    def list_snapshots(self) -> list[dict[str, Any]]:
+        return [job.snapshot() for job in reversed(list(self._jobs.values()))]
 
 
 jobs = ProviderJobManager()

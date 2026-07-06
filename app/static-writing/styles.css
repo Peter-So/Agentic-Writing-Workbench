@@ -20,6 +20,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font: 14px/1.5 "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -29,10 +30,12 @@ button, input, textarea, select { font: inherit; }
 
 .shell {
   height: 100vh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 280px minmax(480px, 1fr) 340px;
   gap: 12px;
   padding: 12px;
+  overflow: hidden;
 }
 
 .rail, .main, .status {
@@ -40,16 +43,19 @@ button, input, textarea, select { font: inherit; }
 }
 
 .rail {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .status {
   display: grid;
-  grid-template-rows: minmax(164px, auto) auto minmax(168px, auto) minmax(220px, 1fr);
-  gap: 12px;
-  overflow: auto;
+  grid-template-rows: max-content max-content minmax(160px, 1fr);
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main {
@@ -63,38 +69,18 @@ button, input, textarea, select { font: inherit; }
   box-shadow: var(--shadow);
 }
 
-.brand, .panel, .topbar, .composer {
+.panel, .topbar, .composer {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
 }
 
-.brand {
-  min-height: 72px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  box-shadow: var(--shadow);
-}
-
-.brand-mark {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--ink);
-  color: #fff;
-  font-weight: 800;
-}
-
-.brand h1, .topbar h2 {
+.topbar h2 {
   margin: 0;
   font-size: 18px;
 }
 
-.brand p, .eyebrow, .muted-line {
+.eyebrow, .muted-line {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -112,6 +98,11 @@ button, input, textarea, select { font: inherit; }
 
 .status .panel {
   overflow: hidden;
+  padding: 8px;
+}
+
+.status .panel-title {
+  margin-bottom: 6px;
 }
 
 .status-card {
@@ -119,30 +110,23 @@ button, input, textarea, select { font: inherit; }
 }
 
 .mission-panel .mission-card,
-.audit-panel .audit-card,
-.sop-panel .sop-card,
 .observe-panel .status-tab-body {
   min-height: 0;
 }
 
-.status .audit-panel,
-.audit-panel {
-  overflow: visible;
+.mission-panel,
+.observe-panel {
+  display: block;
 }
 
-.status .audit-panel .audit-card,
-.audit-panel .audit-card {
-  height: auto;
-  max-height: none;
-  overflow: visible;
+.file-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .mission-panel .mission-card {
-  min-height: 112px;
-}
-
-.sop-panel .sop-card {
-  min-height: 116px;
+  min-height: 0;
+  overflow: visible;
 }
 
 .panel-title {
@@ -260,8 +244,10 @@ button, input, textarea, select { font: inherit; }
 }
 
 .project-panel {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 14px;
+  overflow: auto;
 }
 
 .project-card-head {
@@ -396,11 +382,11 @@ button, input, textarea, select { font: inherit; }
 
 .project-progress-item {
   min-width: 0;
-  min-height: 52px;
+  min-height: 44px;
   display: grid;
   align-content: center;
   gap: 2px;
-  padding: 8px;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
@@ -472,7 +458,7 @@ button, input, textarea, select { font: inherit; }
 
 .project-inventory-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -529,6 +515,95 @@ button, input, textarea, select { font: inherit; }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+}
+
+.reference-workbench {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px;
+  background: var(--panel);
+}
+
+.reference-workbench-head,
+.reference-workbench-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reference-workbench-head {
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.reference-workbench-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.reference-workbench-select,
+.reference-workbench-input,
+.reference-workbench-query {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.reference-workbench-select {
+  flex: 1 1 0;
+}
+
+.reference-workbench-input {
+  flex: 1 1 0;
+}
+
+.reference-workbench-query {
+  width: 100%;
+}
+
+.reference-workbench-note,
+.reference-workbench-result {
+  min-width: 0;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.reference-workbench-note[data-tone="error"] {
+  color: #b42318;
+}
+
+.reference-evidence {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+  margin-top: 5px;
+}
+
+.reference-evidence strong,
+.reference-evidence span,
+.reference-evidence p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-evidence p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .five-dim-chart {
@@ -1159,6 +1234,58 @@ button, input, textarea, select { font: inherit; }
   opacity: .7;
 }
 
+.upgrade-card {
+  display: grid;
+  gap: 10px;
+}
+
+.upgrade-version-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.upgrade-version-row span {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.upgrade-release-title {
+  font-weight: 700;
+}
+
+.upgrade-notes {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.upgrade-blockers {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.upgrade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .message {
   max-width: 960px;
   border: 1px solid var(--line);
@@ -1300,43 +1427,17 @@ textarea {
   min-width: 0;
 }
 
-.provider-card, .doctor-card, .sop-card, .cost-card, .mission-card, .audit-card, .observability-card {
+.provider-card, .doctor-card, .cost-card, .mission-card, .observability-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 9px;
   background: var(--panel-soft);
 }
 
-.audit-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  line-height: 1.45;
-  white-space: normal;
-}
-
-.audit-head,
-.audit-line,
-.audit-detail-line {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.audit-detail-list {
-  display: grid;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.audit-detail-line {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.audit-detail-line.warn {
-  color: #9d4b19;
+.status .mission-card,
+.status .cost-card,
+.status .observability-card {
+  padding: 6px;
 }
 
 .doctor-card {
@@ -1579,20 +1680,52 @@ textarea {
 .file-tree {
   display: grid;
   gap: 4px;
+  align-content: start;
+  color: var(--ink);
+}
+
+.file-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.file-panel .file-tree {
+  min-height: 0;
+  overflow: auto;
 }
 
 .file-item {
+  min-width: 0;
   padding: 5px 6px;
   border-radius: 6px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  line-height: 1.35;
 }
 
 .file-item.dir {
   color: var(--ink);
   font-weight: 700;
+}
+
+.file-item-icon {
+  flex: 0 0 14px;
+  color: var(--accent);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.file-item-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-item[role="button"] {
@@ -1641,6 +1774,40 @@ textarea {
   font-size: 12px;
 }
 
+.task-center-list {
+  display: grid;
+  gap: 6px;
+}
+
+.task-center-item {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 7px;
+  background: var(--panel);
+}
+
+.task-center-item strong,
+.task-center-item span,
+.task-center-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-center-item strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.task-center-item span,
+.task-center-item small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .observability-card {
   display: grid;
   gap: 6px;
@@ -1659,21 +1826,21 @@ textarea {
 
 .status-tabs {
   display: flex;
-  gap: 5px;
+  gap: 3px;
   flex-wrap: wrap;
-  margin: -2px 0 10px;
+  margin: -1px 0 6px;
 }
 
 .status-tab {
   position: relative;
-  min-height: 25px;
+  min-height: 21px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 3px 9px;
+  padding: 2px 6px;
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.2;
 }
 
@@ -1710,28 +1877,31 @@ textarea {
 
 .observe-panel .cost-card,
 .observe-panel .observability-card {
-  min-height: 104px;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 5px;
 }
 
 .metric-grid div {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 6px;
+  padding: 4px;
   background: var(--panel);
 }
 
 .metric-grid strong {
   display: block;
   color: var(--ink);
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.1;
   overflow-wrap: anywhere;
 }
@@ -1739,7 +1909,7 @@ textarea {
 .metric-grid span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .stage-mini {
@@ -1771,9 +1941,13 @@ textarea {
 }
 
 @media (max-width: 1100px) {
+  body {
+    overflow: auto;
+  }
   .shell {
     height: auto;
     min-height: 100vh;
+    overflow: visible;
     grid-template-columns: 1fr;
   }
   .main {

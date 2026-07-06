@@ -1,5 +1,28 @@
 # 更新日志
 
+## Agentic-Writing-Workbench-v0.1.7
+
+本版同步 writing 工作项目近期的结构化优化，重点补强上下文边界、任务统一视图、参考小说工作台、项目实体索引和优化界面信息。
+
+### 新增
+
+- 新增 Context Broker，将 Wiki、技法、多维参考、项目资产和记忆召回统一为 resolver、required/preferred、token budget、selected/dropped 与 trace。
+- 新增任务中心，聚合 pending intent、workflow status、invocation、provider job、参考小说导入/整本抽取任务和公开库升级任务标记。
+- 新增项目实体 Registry，统一索引章节、人物、设定、大纲、资产和参考维度，减少靠路径猜测。
+- 新增参考小说工作台能力：已导入小说列表、整本多维抽取、异步任务计时、中断检测、召回测试和证据报告发布。
+
+### 优化
+
+- 创作链路在材料装配后经过 Context Broker 边界裁剪，阶段外材料不会继续污染后续 prompt。
+- 参考小说整本抽取完成后会刷新多维统计和索引状态，重复抽取会跳过已处理内容。
+- Entity Registry 读取默认不落盘，只有显式 rebuild 才写入项目 Wiki。
+- 优化 Web UI界面样式去除冗余、无效卡片，卡片内容只展示项目所需的有用信息，现在界面更加清晰、简洁。
+
+### 边界
+
+- 聊天按钮仍保持直接问答，不进入创作意图分析和材料组装链路。
+- 运行期任务日志、参考小说抽取结果、用户项目资料、记忆、配置和创作资产不进入公开库提交边界。
+
 ## Agentic-Writing-Workbench-v0.1.6
 
 本版补强多维参考库、创作方法知识库和信息边界，确保参考小说导入、阶段材料组装、provider 外发和最终成稿之间职责清晰。

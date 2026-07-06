@@ -8,7 +8,7 @@ STAGE_PRESETS: dict[str, list[str]] = {
     "draft": [
         "request_analyze", "need_audit", "draft_assemble", "prompt_refine",
         "creative_state", "methodology_context", "creative_enhancements",
-        "material_profile", "provider_route", "generate", "pre_review",
+        "material_profile", "context_broker", "provider_route", "generate", "pre_review",
         "model_review", "draft_finalize", "user_confirm",
     ],
     "provider": [
@@ -51,6 +51,7 @@ STAGE_LABELS: dict[str, str] = {
     "methodology_context": "方法论匹配",
     "creative_enhancements": "增强卡片",
     "material_profile": "阶段裁剪",
+    "context_broker": "上下文调度",
     "prompt_refine": "专业提问",
     "provider_route": "路由决策",
     "provider_fanout": "网页模型",

@@ -50,8 +50,6 @@ const messageInput = document.querySelector("#messageInput");
 const aiToggle = document.querySelector("#aiToggle");
 const providerChecks = document.querySelector("#providerChecks");
 const missionCard = document.querySelector("#missionCard");
-const auditCard = document.querySelector("#auditCard");
-const sopCard = document.querySelector("#sopCard");
 const costCard = document.querySelector("#costCard");
 const invocationCard = document.querySelector("#invocationCard");
 const harnessCard = document.querySelector("#harnessCard");
@@ -64,6 +62,7 @@ const wikiCard = document.querySelector("#wikiCard");
 const sendBtn = document.querySelector("#sendBtn");
 const chatBtn = document.querySelector("#chatBtn");
 const doctorBtn = document.querySelector("#doctorBtn");
+const upgradeBtn = document.querySelector("#upgradeBtn");
 const chatModelSelect = document.querySelector("#chatModelSelect");
 const writingModelSelect = document.querySelector("#writingModelSelect");
 const reviewModelSelect = document.querySelector("#reviewModelSelect");
@@ -73,8 +72,15 @@ let currentProject = localStorage.getItem("writing.ui.project") || "";
 let currentKind = "generic";
 let latestFlowTask = "";
 let providers = [];
-let workflowSop = null;
 let collaborationState = null;
+let taskCenterState = null;
+let entityRegistryState = null;
+let projectInventoryState = null;
+let referenceWorkbenchState = null;
+let latestReferenceEvidence = [];
+let activeReferenceExtractJobId = "";
+let referenceExtractTimerId = null;
+const REFERENCE_EXTRACT_JOB_KEY = "writing.reference.extract.job";
 let historyLoadedFor = "";
 let activeStatusTab = "cost";
 const statusTabSignatures = {};
@@ -99,13 +105,14 @@ let modelRegistry = { models: [], image_models: [], roles: {} };
 let workflowRegistry = { presets: {}, labels: {} };
 
 const FALLBACK_STAGE_PRESETS = {
-  draft: ["request_analyze", "need_audit", "draft_assemble", "prompt_refine", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
+  draft: ["request_analyze", "need_audit", "draft_assemble", "prompt_refine", "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   provider: ["provider_fanout", "provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge"],
   followup: ["request_analyze", "need_audit", "context_followup", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   provider_confirm: ["provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   intervention: ["submit", "memory_lookup", "llm_analysis", "knowledge_settle", "memory_write", "policy_update", "impact_analyze", "primary_write", "primary_artifact", "related_write", "related_pending", "invocation_finalize", "pending_clear", "cleanup", "complete"],
   reference_import: ["reference_import_validate", "reference_import_save", "reference_import_analyze", "reference_import_five_dim", "reference_import_index", "reference_import_refresh"],
   archive: ["archive_submit", "archive_write", "overwrite_confirm", "overwrite", "archive_refresh", "complete"],
+  app_upgrade: ["upgrade_check", "upgrade_download", "upgrade_backup", "upgrade_apply", "upgrade_rollback", "upgrade_restart"],
 };
 const VISUAL_PROMPT_STAGES = [
   "visual_prompt_start", "visual_prompt_beat", "visual_prompt_scene", "visual_prompt_characters",
@@ -122,6 +129,11 @@ const FALLBACK_NODE_LABELS = {
   need_audit: "需求审计",
   context_followup: "上下文续问",
   draft_assemble: "材料装配",
+  creative_state: "状态卡/伏笔",
+  methodology_context: "方法论匹配",
+  creative_enhancements: "增强卡片",
+  material_profile: "阶段裁剪",
+  context_broker: "上下文调度",
   prompt_refine: "专业提问",
   provider_route: "路由决策",
   provider_fanout: "网页模型",
@@ -214,6 +226,12 @@ const UI_OPERATION_LABELS = {
   overwrite_confirm: "等待覆盖确认",
   overwrite: "覆盖写回",
   archive_refresh: "刷新项目状态",
+  upgrade_check: "检查版本",
+  upgrade_download: "下载新版",
+  upgrade_backup: "创建备份",
+  upgrade_apply: "更新框架",
+  upgrade_rollback: "失败回滚",
+  upgrade_restart: "重启服务",
   doctor_request: "发起诊断",
   doctor_check: "执行检查",
   doctor_render: "渲染诊断",
@@ -530,7 +548,6 @@ function rememberFlowTask(...sources) {
     );
     if (task && task !== "generic") {
       latestFlowTask = task;
-      renderSop();
       return task;
     }
   }
@@ -549,14 +566,6 @@ function syncAiToggleFromProviders() {
   const hasSelectedProvider = Object.values(loginConfirmed()).some(Boolean);
   aiToggle.checked = hasSelectedProvider;
   saveBoolPref(AI_TOGGLE_KEY, aiToggle.checked);
-}
-
-function modeText(mode) {
-  return {
-    parallel_collect_then_serial_merge: "并行征集→串行融合",
-    serial_transform: "串行转化",
-    serial_repair: "串行修复",
-  }[mode] || mode || "未指定";
 }
 
 function escapeHtml(value) {
@@ -864,6 +873,7 @@ function setBusy(busy, label = "运行中") {
   composerBusy = Boolean(busy);
   updateComposerButtons();
   doctorBtn.disabled = busy;
+  if (upgradeBtn) upgradeBtn.disabled = busy;
   if (createProjectBtn) createProjectBtn.disabled = busy;
   if (deleteProjectBtn) deleteProjectBtn.disabled = busy || !currentProject;
   if (projectFlowBtn) projectFlowBtn.disabled = busy || !currentProject;
@@ -1456,7 +1466,7 @@ async function openProjectFlow() {
     assertApiOk(res, data, "流程图加载失败");
     renderGraphView(data);
     showGraphViewer();
-    setProjectActionStatus(`已打开 ${projectKindLabel(data.project_kind)} 流程图。`, "ok");
+    setProjectActionStatus("");
   } catch (error) {
     setProjectActionStatus(`流程图加载失败：${error}`, "error");
     addMessage("system", `流程图加载失败：${error}`, "流程");
@@ -1496,7 +1506,6 @@ function renderFileEditor() {
 function closeFileEditor() {
   activeFile = null;
   renderFileEditor();
-  renderSop();
   showConversation();
 }
 
@@ -1684,7 +1693,6 @@ async function openFile(path) {
       dirty: false,
     };
     flow.step("file_render");
-    renderSop();
     renderFileEditor();
     showFileEditor();
     flow.done();
@@ -2464,10 +2472,13 @@ function renderProjectProgress(progress) {
         `<span class="${stage.done ? "done" : ""}" title="${escapeHtml(stage.path || stage.label || "")}">${escapeHtml(stage.label || "")}</span>`
       )).join("")}</div>`
     : "";
+  const progressLabels = ["当前阶段", "大纲章节", "正文完成"];
+  let progressItems = items.filter((item) => progressLabels.includes(item.label || ""));
+  if (progressItems.length < 3) progressItems = items.slice(0, 3);
   projectProgress.innerHTML = `
     <div class="project-progress-grid">
-      ${items.map((item) => `
-        <div class="project-progress-item ${item.wide ? "wide" : ""} ${item.label === "当前进度" ? "current" : ""}">
+      ${progressItems.slice(0, 3).map((item) => `
+        <div class="project-progress-item ${item.wide ? "wide" : ""} ${item.label === "当前阶段" || item.label === "当前进度" ? "current" : ""}" title="${escapeHtml(`${item.label || ""}：${item.value ?? ""}${item.unit || ""}`)}">
           <span>${escapeHtml(item.label || "")}</span>
           <strong>${escapeHtml(item.value ?? "")}${escapeHtml(item.unit || "")}</strong>
         </div>
@@ -2605,24 +2616,220 @@ function renderProjectInventory(inventory) {
   ].filter(Boolean).join("\n");
   const rows = [
     { label: "技能", value: skills.count || 0, unit: "张", title: skillTitle || "暂无技能卡" },
-    { label: "参考小说", value: refs.count || 0, unit: "本", title: refTitle, action: "import_reference" },
-    { label: "多维参考库", value: multi.segment_count || multi.anchor_count || 0, unit: multi.segment_count ? "段" : "项", title: fiveTitle },
+    { label: "实体索引", value: entityRegistryState?.summary?.total || 0, unit: "项", title: entityRegistryTitle(entityRegistryState) },
   ];
   const chart = Object.keys(dimensions).length ? renderMultiDimChart(dimensions) : "";
+  const dimensionOptions = orderedDimensions(dimensions)
+    .map(([key, count]) => `<option value="${escapeHtml(key)}">${escapeHtml(dimensionLabel(key))} (${escapeHtml(count)})</option>`)
+    .join("");
+  const importedNovels = referenceWorkbenchState?.novels || referenceWorkbenchState?.reference_novels?.novels || [];
+  const selectedTitle = document.querySelector("#referenceNovelSelect")?.value || importedNovels[0]?.title || "";
+  const selectedNovel = importedNovels.find((item) => item.title === selectedTitle) || importedNovels[0] || {};
+  const extractRunning = Boolean(activeReferenceExtractJobId);
+  const novelOptions = importedNovels.map((item) => {
+    const status = item.extraction?.extracted ? "已入库" : item.available ? "待抽取" : "缺原文";
+    return `<option value="${escapeHtml(item.title || "")}" ${item.title === selectedTitle ? "selected" : ""}>${escapeHtml(item.title || "")} · ${status}</option>`;
+  }).join("");
+  const extractNote = selectedNovel.title
+    ? referenceNovelExtractNote(selectedNovel)
+    : "导入 TXT 后会自动出现在这里；召回测试不强制选择小说。";
   projectInventory.innerHTML = `
     <div class="project-inventory-grid">
       ${rows.map((item) => `
         <div class="project-inventory-item" title="${escapeHtml(item.title || "")}">
           <span>${escapeHtml(item.label)}</span>
-          <strong class="${item.action === "import_reference" ? "with-action" : ""}">
-            <span>${escapeHtml(item.value)}${escapeHtml(item.unit)}</span>
-            ${item.action === "import_reference" ? `<button class="inventory-action-btn" type="button" data-import-reference title="导入 TXT 小说到参考小说库，并执行多维抽取与索引重建。">导入</button>` : ""}
-          </strong>
+          <strong><span>${escapeHtml(item.value)}${escapeHtml(item.unit)}</span></strong>
         </div>
       `).join("")}
     </div>
     ${chart}
+    <div class="reference-workbench">
+      <div class="reference-workbench-head">
+        <strong>参考小说工作台</strong>
+        <div class="reference-workbench-actions">
+          <button class="inventory-action-btn" type="button" data-import-reference title="导入 TXT 小说到参考小说库，并执行多维抽取与索引重建。">导入</button>
+          <button class="inventory-action-btn" type="button" data-reference-workbench-refresh>刷新</button>
+        </div>
+      </div>
+      <div class="reference-workbench-row">
+        <select id="referenceNovelSelect" class="reference-workbench-select" title="已导入参考小说">
+          <option value="">全部参考小说</option>
+          ${novelOptions}
+        </select>
+        <button class="inventory-action-btn" type="button" data-reference-extract-full ${selectedNovel?.can_extract && !extractRunning ? "" : "disabled"}>整本抽取</button>
+      </div>
+      <div id="referenceExtractStatus" class="reference-workbench-note">${escapeHtml(extractNote)}</div>
+      <div class="reference-workbench-row">
+        <input id="referenceRecallQuery" class="reference-workbench-query" placeholder="召回测试，如：世界观 权力结构" />
+      </div>
+      <div class="reference-workbench-row">
+        <select id="referenceRecallDimension" class="reference-workbench-select" title="召回维度">
+          <option value="">全部维度</option>
+          ${dimensionOptions}
+        </select>
+        <button class="inventory-action-btn" type="button" data-reference-recall-test>测试</button>
+        <button class="inventory-action-btn" type="button" data-reference-publish>发布</button>
+      </div>
+      <div id="referenceWorkbenchResult" class="reference-workbench-result muted-line">可先测试召回，再发布证据报告。</div>
+    </div>
   `;
+}
+
+function referenceNovelExtractNote(novel) {
+  const total = Number(novel.total_chars || 0);
+  const estimated = Number(novel.estimated_seconds || 0);
+  const coverage = novel.extraction?.dimension_coverage || {};
+  const dims = Object.entries(coverage).filter(([, count]) => Number(count || 0) > 0);
+  if (novel.extraction?.extracted) {
+    return `已整本入库：${total.toLocaleString()} 字，${novel.extraction.total_dimension_matches || 0} 段，${dims.length} 个维度。再次执行会自动跳过重复抽取。`;
+  }
+  if (!novel.available) return "未找到原文文件，无法执行整本抽取。";
+  return `待整本抽取：${total.toLocaleString()} 字，预计 ${formatDuration(estimated)}。抽取在后台执行，不占用主对话状态栏。`;
+}
+
+function entityRegistryTitle(registry) {
+  const summary = registry?.summary || {};
+  const rows = Object.entries(summary.by_type || {})
+    .map(([key, count]) => `${key}: ${count}`)
+    .join("\n");
+  return [
+    `总数：${summary.total || 0}`,
+    registry?.path ? `索引：${registry.path}` : "",
+    rows,
+  ].filter(Boolean).join("\n") || "实体索引未生成";
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds || 0)));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes <= 0) return `${rest}s`;
+  return `${minutes}m ${rest}s`;
+}
+
+function selectedReferenceNovelTitle() {
+  return document.querySelector("#referenceNovelSelect")?.value || "";
+}
+
+function referenceExtractStorageKey() {
+  return `${REFERENCE_EXTRACT_JOB_KEY}.${currentProject || "default"}`;
+}
+
+function setReferenceExtractStatus(text, tone = "") {
+  const el = document.querySelector("#referenceExtractStatus");
+  if (!el) return;
+  el.textContent = text || "";
+  el.dataset.tone = tone || "";
+}
+
+function renderReferenceExtractJob(job) {
+  if (!job) return;
+  const status = job.status || "unknown";
+  const elapsed = formatDuration(job.elapsed_seconds || 0);
+  const estimated = formatDuration(job.estimated_seconds || 0);
+  const label = job.label || "整本抽取";
+  const stage = stageLabel(job.stage || "") || job.stage || "";
+  const prefix = job.title ? `《${job.title}》` : "参考小说";
+  const coverage = job.result?.extraction?.dimension_coverage || job.result?.dimension_coverage || {};
+  const dimCount = Object.values(coverage).filter((count) => Number(count || 0) > 0).length;
+  if (status === "completed") {
+    setReferenceExtractStatus(`${prefix}整本抽取完成：耗时 ${elapsed}，${job.result?.total_dimension_matches || job.result?.extraction?.total_dimension_matches || 0} 段，${dimCount} 个维度。`);
+    return;
+  }
+  if (status === "skipped") {
+    setReferenceExtractStatus(`${prefix}已入库，跳过重复抽取：耗时 ${elapsed}。`);
+    return;
+  }
+  if (status === "failed" || status === "interrupted" || job.interrupted) {
+    setReferenceExtractStatus(`${prefix}整本抽取异常中断：${job.error || label}。已耗时 ${elapsed}，可刷新后重新启动。`, "error");
+    return;
+  }
+  setReferenceExtractStatus(`${prefix}${label}${stage ? ` / ${stage}` : ""}：已耗时 ${elapsed}，预计 ${estimated}。后台执行中，不占用主对话状态栏。`);
+}
+
+function stopReferenceExtractPolling(clearStored = false) {
+  if (referenceExtractTimerId) {
+    clearInterval(referenceExtractTimerId);
+    referenceExtractTimerId = null;
+  }
+  if (clearStored) {
+    localStorage.removeItem(referenceExtractStorageKey());
+    activeReferenceExtractJobId = "";
+  }
+}
+
+async function pollReferenceExtractJob(jobId, { once = false } = {}) {
+  if (!jobId) return;
+  try {
+    const res = await fetch(`/api/writing/reference-workbench/extract-job/${encodeURIComponent(jobId)}`);
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "整本抽取任务查询失败");
+    renderReferenceExtractJob(data);
+    const status = data.status || "";
+    if (["completed", "skipped", "failed", "interrupted"].includes(status) || data.interrupted) {
+      stopReferenceExtractPolling(true);
+      await loadStatus();
+      await loadFiles();
+      renderReferenceExtractJob(data);
+    }
+  } catch (error) {
+    stopReferenceExtractPolling(true);
+    setReferenceExtractStatus(`整本抽取任务状态不可恢复：${error}。如果服务刚重启，后台任务已中断，请重新启动。`, "error");
+  }
+  if (once) return;
+}
+
+function startReferenceExtractPolling(jobId) {
+  if (!jobId) return;
+  activeReferenceExtractJobId = jobId;
+  localStorage.setItem(referenceExtractStorageKey(), jobId);
+  stopReferenceExtractPolling(false);
+  activeReferenceExtractJobId = jobId;
+  referenceExtractTimerId = setInterval(() => {
+    pollReferenceExtractJob(jobId);
+  }, 1500);
+}
+
+async function startReferenceFullExtract() {
+  const title = selectedReferenceNovelTitle();
+  if (!title) {
+    setReferenceExtractStatus("请选择一本文本已导入的参考小说。", "error");
+    return;
+  }
+  const novel = (referenceWorkbenchState?.novels || referenceWorkbenchState?.reference_novels?.novels || [])
+    .find((item) => item.title === title);
+  if (novel && !novel.can_extract) {
+    setReferenceExtractStatus(referenceNovelExtractNote(novel), novel.available ? "" : "error");
+    return;
+  }
+  setReferenceExtractStatus(`《${title}》整本抽取任务启动中...`);
+  try {
+    const res = await fetch("/api/writing/reference-workbench/extract-async", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ novel_id: currentProject, title }),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "整本抽取任务启动失败");
+    const job = data.job || {};
+    activeReferenceExtractJobId = job.job_id || "";
+    renderReferenceExtractJob(job);
+    if (activeReferenceExtractJobId) {
+      startReferenceExtractPolling(activeReferenceExtractJobId);
+    }
+  } catch (error) {
+    setReferenceExtractStatus(`整本抽取任务启动失败：${error}`, "error");
+  }
+}
+
+async function restoreReferenceExtractJob() {
+  const jobId = localStorage.getItem(referenceExtractStorageKey()) || "";
+  if (!jobId || activeReferenceExtractJobId) return;
+  activeReferenceExtractJobId = jobId;
+  await pollReferenceExtractJob(jobId, { once: true });
+  if (activeReferenceExtractJobId) {
+    startReferenceExtractPolling(jobId);
+  }
 }
 
 function referenceImportInput() {
@@ -2688,13 +2895,7 @@ async function importReferenceNovel(file) {
       }
     }
     flow.done();
-    if (doneData?.project_status) {
-      currentKind = doneData.project_status.project_kind || currentKind;
-      renderProjectProgress(doneData.project_status.project_progress || {});
-      renderProjectInventory(doneData.project_status.project_inventory || {});
-    } else {
-      await loadStatus();
-    }
+    await loadStatus();
     await loadFiles();
     const warnings = Array.isArray(doneData?.warnings) ? doneData.warnings : [];
     setProjectActionStatus(warnings.length ? "导入完成，但部分索引步骤有警告。" : "参考小说导入完成。", warnings.length ? "warn" : "");
@@ -2712,6 +2913,91 @@ async function importReferenceNovel(file) {
   }
 }
 
+async function refreshReferenceWorkbench() {
+  try {
+    const res = await fetch(`/api/writing/reference-workbench?novel_id=${encodeURIComponent(currentProject)}`);
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "参考小说工作台加载失败");
+    projectInventoryState = data.inventory || projectInventoryState || {};
+    referenceWorkbenchState = data.reference_novels || { ok: true, novels: [] };
+    renderProjectInventory(projectInventoryState);
+    setProjectActionStatus(`参考工作台已刷新：${(data.dimensions || []).length} 个维度。`);
+  } catch (error) {
+    setProjectActionStatus(`参考工作台刷新失败：${error}`, "error");
+  }
+}
+
+async function runReferenceRecallTest() {
+  const query = document.querySelector("#referenceRecallQuery")?.value?.trim() || "";
+  const dimension = document.querySelector("#referenceRecallDimension")?.value || "";
+  const resultEl = document.querySelector("#referenceWorkbenchResult");
+  if (!query) {
+    if (resultEl) resultEl.textContent = "请输入召回测试关键词。";
+    return;
+  }
+  if (resultEl) resultEl.textContent = "召回测试中...";
+  try {
+    const res = await fetch("/api/writing/reference-workbench/recall-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        novel_id: currentProject,
+        query,
+        dimensions: dimension ? [dimension] : [],
+        top_k: 8,
+      }),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "召回测试失败");
+    latestReferenceEvidence = data.evidence || [];
+    if (resultEl) {
+      resultEl.innerHTML = latestReferenceEvidence.length
+        ? latestReferenceEvidence.map((item) => `
+            <div class="reference-evidence" title="${escapeHtml(item.context || item.text || "")}">
+              <strong>${escapeHtml(item.novel || "未知")}</strong>
+              <span>${escapeHtml(dimensionLabel(item.dimension || ""))} · ${escapeHtml(item.anchor || "")} · score=${escapeHtml(item.score || 0)}</span>
+              <p>${escapeHtml(item.text || "")}</p>
+            </div>
+          `).join("")
+        : "没有召回证据，请调整关键词或维度。";
+    }
+    setProjectActionStatus(`召回测试完成：${latestReferenceEvidence.length} 条证据。`);
+  } catch (error) {
+    if (resultEl) resultEl.textContent = `召回测试失败：${error}`;
+    setProjectActionStatus(`召回测试失败：${error}`, "error");
+  }
+}
+
+async function publishReferenceEvidence() {
+  const resultEl = document.querySelector("#referenceWorkbenchResult");
+  if (!latestReferenceEvidence.length) {
+    if (resultEl) resultEl.textContent = "请先完成召回测试，再发布证据报告。";
+    return;
+  }
+  const query = document.querySelector("#referenceRecallQuery")?.value?.trim() || "";
+  const dimension = document.querySelector("#referenceRecallDimension")?.value || "";
+  try {
+    const res = await fetch("/api/writing/reference-workbench/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        novel_id: currentProject,
+        title: "参考小说召回测试报告",
+        query,
+        dimensions: dimension ? [dimension] : [],
+        evidence: latestReferenceEvidence,
+      }),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "证据报告发布失败");
+    setProjectActionStatus(data.message || "证据报告已发布。");
+    if (resultEl) resultEl.textContent = `已发布：${data.path}`;
+    await loadFiles();
+  } catch (error) {
+    setProjectActionStatus(`证据报告发布失败：${error}`, "error");
+  }
+}
+
 function activeShortFilmSource() {
   if (!activeFile) return {};
   const task = activeFileTask();
@@ -2723,28 +3009,26 @@ function activeShortFilmSource() {
   };
 }
 
-function renderSop() {
-  const task = flowTask();
-  const sop = workflowSop?.tasks?.[task];
-  if (!sop) {
-    sopCard.innerHTML = `
-      <div><strong>LLM 自动判断任务</strong></div>
-      <div class="muted-line">请求理解节点将结合项目结构和当前状态选择流程。</div>
-      <div class="muted-line">创作流会按阶段启用方法论、状态卡、增强卡和材料裁剪。</div>
+function renderCollaborationIdle() {
+  if (taskCenterState?.items?.length) {
+    const items = taskCenterState.items || [];
+    invocationCard.innerHTML = `
+      <div class="task-center-list">
+        ${items.map((item) => `
+          <div class="task-center-item ${escapeHtml(item.status || "")}" title="${escapeHtml(item.next_action || "")}">
+            <strong>${escapeHtml(item.label || item.id || "")}</strong>
+            <span>${escapeHtml(item.type || "")} · ${escapeHtml(item.status || "unknown")}</span>
+            <small>${escapeHtml(item.updated_at || item.created_at || "")}</small>
+          </div>
+        `).join("")}
+      </div>
+      <div class="mini-actions">
+        <button type="button" data-task-center-refresh>刷新任务中心</button>
+      </div>
     `;
+    markStatusTabUpdated("invocation", taskCenterState);
     return;
   }
-  sopCard.innerHTML = `
-    <div><strong>${sop.stage || task}</strong></div>
-    <div class="muted-line">角色：${sop.role_label || sop.role || "创作助手"}</div>
-    <div class="muted-line">协作：${modeText(sop.mode)}</div>
-    <div class="muted-line">确认门：${sop.confirmation_gate || "material_selection"}</div>
-    <div class="muted-line">硬规则：${(sop.hard_rules || []).length} 条</div>
-    <div class="muted-line">增强：方法论 · 状态卡 · 参考拆解 · 读者体验 · 自检</div>
-  `;
-}
-
-function renderCollaborationIdle() {
   if (!collaborationState) return;
   if (!collaborationState.latest_invocation_id) {
     invocationCard.textContent = "尚未运行";
@@ -2767,6 +3051,18 @@ function renderCollaborationIdle() {
     harness: collaborationState.harness_count,
     budget: collaborationState.budget_count,
   });
+}
+
+async function refreshTaskCenter() {
+  try {
+    const res = await fetch(`/api/writing/task-center?novel_id=${encodeURIComponent(currentProject)}&limit=20`);
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "任务中心加载失败");
+    taskCenterState = data;
+    renderCollaborationIdle();
+  } catch (error) {
+    invocationCard.textContent = `任务中心加载失败：${error}`;
+  }
 }
 
 function renderCostBoard(data) {
@@ -2800,24 +3096,6 @@ function renderMission(data) {
       </div>
     ` : ""}
   `;
-}
-
-function renderNeedAudit(audit) {
-  const risks = audit?.risks || [];
-  const missing = audit?.missing || [];
-  const riskRows = risks.map((item) => item?.message || String(item || "")).filter(Boolean);
-  const missingRows = missing.map((item) => String(item || "")).filter(Boolean);
-  const detailRows = [
-    ...riskRows.map((text) => `<div class="audit-detail-line warn">风险：${escapeHtml(text)}</div>`),
-    ...missingRows.map((text) => `<div class="audit-detail-line">缺失：${escapeHtml(text)}</div>`),
-  ].join("");
-  auditCard.innerHTML = `
-    <div class="audit-head"><strong>${escapeHtml(audit?.deliverable || "未识别")}</strong> <span class="status-chip ${audit?.level || "ok"}">${audit?.level || "ok"}</span></div>
-    <div class="audit-line">建议任务：${escapeHtml(audit?.suggested_task || "无")} · 网页模型：${audit?.provider_recommended ? "建议" : "可选"}</div>
-    <div class="audit-line">风险 ${risks.length} · 缺失 ${missing.length}</div>
-    ${detailRows ? `<div class="audit-detail-list">${detailRows}</div>` : ""}
-  `;
-  auditCard.title = [...riskRows, ...missingRows.map((item) => `缺失：${item}`)].join("\n");
 }
 
 function renderHarnessSuggestions(data) {
@@ -2982,7 +3260,7 @@ function renderFileTree(node, root = fileTreeEl, depth = 0) {
     if (child.type === "directory") {
       const key = child.path || child.name;
       const isOpen = collapsedFileDirs.has(key);
-      item.textContent = `${isOpen ? "▾" : "▸"} ${child.name}`;
+      item.replaceChildren(fileTreeIcon(isOpen ? "▾" : "▸"), fileTreeName(child.name));
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-expanded", String(isOpen));
@@ -3001,7 +3279,7 @@ function renderFileTree(node, root = fileTreeEl, depth = 0) {
       root.appendChild(item);
       if (isOpen) renderFileTree(child, root, depth + 1);
     } else {
-      item.textContent = child.name;
+      item.replaceChildren(fileTreeIcon(isProjectWikiPath(child.path) ? "◇" : "•"), fileTreeName(child.name));
       item.classList.toggle("disabled", !child.previewable);
       if (child.previewable) {
         item.tabIndex = 0;
@@ -3019,6 +3297,20 @@ function renderFileTree(node, root = fileTreeEl, depth = 0) {
   }
 }
 
+function fileTreeIcon(text) {
+  const icon = document.createElement("span");
+  icon.className = "file-item-icon";
+  icon.textContent = text;
+  return icon;
+}
+
+function fileTreeName(text) {
+  const name = document.createElement("span");
+  name.className = "file-item-name";
+  name.textContent = text || "";
+  return name;
+}
+
 async function loadStatus() {
   const statusUrl = currentProject
     ? `/api/writing/status?novel_id=${encodeURIComponent(currentProject)}`
@@ -3028,11 +3320,14 @@ async function loadStatus() {
   assertApiOk(res, data, "项目状态加载失败");
   currentProject = data.novel || currentProject;
   currentKind = data.project_kind || "generic";
-  workflowSop = data.workflow_sop || null;
   collaborationState = data.collaboration || null;
+  taskCenterState = data.task_center || null;
+  entityRegistryState = data.entity_registry || null;
+  projectInventoryState = data.project_inventory || {};
+  referenceWorkbenchState = data.reference_workbench || null;
   localStorage.setItem("writing.ui.project", currentProject);
   renderProjectProgress(data.project_progress || {});
-  renderProjectInventory(data.project_inventory || {});
+  renderProjectInventory(projectInventoryState);
   projectSelect.innerHTML = "";
   for (const item of data.novels || []) {
     const opt = document.createElement("option");
@@ -3044,8 +3339,8 @@ async function loadStatus() {
   if (deleteProjectBtn) deleteProjectBtn.disabled = !currentProject;
   if (projectFlowBtn) projectFlowBtn.disabled = !currentProject;
   renderTasks();
-  renderSop();
   renderCollaborationIdle();
+  await restoreReferenceExtractJob();
 }
 
 function setProjectActionStatus(text, tone = "") {
@@ -3135,6 +3430,202 @@ async function deleteCurrentProject() {
   } finally {
     setBusy(false);
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function checkAppUpgrade() {
+  setBusy(true, "检查更新");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  try {
+    flow.step("upgrade_check");
+    const res = await fetch("/api/app-upgrade/check", { cache: "no-store" });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "检查更新失败");
+    flow.doneNodes.add("upgrade_check");
+    renderUpgradeCard(data);
+    flow.done();
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `检查更新失败：${error}`, "版本更新");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderUpgradeCard(data = {}) {
+  const release = data.release || {};
+  const activeTasks = data.active_tasks || {};
+  const blockers = Array.isArray(activeTasks.blockers) ? activeTasks.blockers : [];
+  const item = document.createElement("article");
+  item.className = "message assistant";
+
+  const title = document.createElement("div");
+  title.className = "message-title";
+  title.textContent = data.has_update ? "发现新版本" : "当前已是最新版本";
+  item.appendChild(title);
+
+  const body = document.createElement("div");
+  body.className = "upgrade-card";
+  body.innerHTML = `
+    <div class="upgrade-version-row">
+      <span>当前：${escapeHtml(data.current_version || "未知")}</span>
+      <span>最新：${escapeHtml(data.latest_version || "未知")}</span>
+    </div>
+    <div class="upgrade-release-title">${escapeHtml(release.name || data.latest_version || "Release")}</div>
+    <pre class="upgrade-notes">${escapeHtml(release.body || "暂无发布说明。")}</pre>
+    <div class="upgrade-safety muted-line">升级前会自动备份；不会覆盖 .env、projects、data、logs、tmp、backups 等用户资产。</div>
+    ${blockers.length ? `<div class="upgrade-blockers">
+      <strong>暂不能升级：存在 ${blockers.length} 个未完成任务</strong>
+      ${blockers.slice(0, 5).map((blocker) => `<div>${escapeHtml(upgradeBlockerText(blocker))}</div>`).join("")}
+    </div>` : ""}
+  `;
+
+  if (data.has_update) {
+    const actions = document.createElement("div");
+    actions.className = "upgrade-actions";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "button danger";
+    confirmBtn.type = "button";
+    confirmBtn.textContent = "确认升级";
+    confirmBtn.disabled = blockers.length > 0 || data.safe_to_upgrade === false;
+    confirmBtn.title = confirmBtn.disabled ? "请先完成、归档或取消未完成任务后再升级。" : "备份框架文件并升级到最新版本。";
+    confirmBtn.addEventListener("click", () => startAppUpgrade(data.latest_version || ""));
+    actions.appendChild(confirmBtn);
+    if (release.html_url) {
+      const link = document.createElement("a");
+      link.className = "button ghost";
+      link.href = release.html_url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = "查看 Release";
+      actions.appendChild(link);
+    }
+    body.appendChild(actions);
+  }
+
+  item.appendChild(body);
+  messagesEl.appendChild(item);
+  scrollMessagesToBottom();
+}
+
+function upgradeBlockerText(item = {}) {
+  const labels = {
+    provider_job: "网页模型任务",
+    invocation: "创作任务",
+    pending_intent: "待恢复任务",
+    workflow_status: "流程状态",
+    reference_extract_job: "参考小说抽取",
+  };
+  const typeLabel = labels[item.type] || item.type || "任务";
+  const project = item.novel_id ? `项目 ${item.novel_id}` : "";
+  const id = item.id ? `ID ${item.id}` : "";
+  const status = item.status ? `状态 ${item.status}` : "";
+  const task = item.task ? `类型 ${item.task}` : "";
+  return [typeLabel, project, id, status, task].filter(Boolean).join("｜");
+}
+
+async function startAppUpgrade(version = "") {
+  const confirmed = window.confirm("确认升级到最新版本？升级会先备份框架文件，完成后自动重启服务。");
+  if (!confirmed) return;
+  setBusy(true, "升级中");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  flow.step("upgrade_download");
+  try {
+    const payload = {
+      version,
+      host: location.hostname || "127.0.0.1",
+      port: Number(location.port || 7861),
+    };
+    const res = await fetch("/api/app-upgrade/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "启动升级失败");
+    addMessage("system", "升级任务已启动，页面会在服务重启后自动刷新。", "版本更新");
+    await pollAppUpgrade(flow);
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `升级失败：${error}`, "版本更新");
+    setBusy(false);
+  }
+}
+
+async function pollAppUpgrade(flow) {
+  let restartExpected = false;
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      const data = await readJsonResponse(res);
+      assertApiOk(res, data, "读取升级状态失败");
+      updateUpgradeFlow(flow, data);
+      if (data.status === "failed") {
+        flow.fail();
+        setBusy(false);
+        addMessage("system", data.message || "升级失败。", "版本更新");
+        return;
+      }
+      if (data.status === "completed" || data.status === "restarting") {
+        restartExpected = true;
+      }
+      if (restartExpected && data.restart?.scheduled) {
+        await waitForServiceRestore();
+        return;
+      }
+    } catch (error) {
+      if (restartExpected) {
+        await waitForServiceRestore();
+        return;
+      }
+    }
+    await delay(1800);
+  }
+  flow.fail();
+  setBusy(false);
+  addMessage("system", "升级等待超时，请手动刷新页面或检查服务。", "版本更新");
+}
+
+function updateUpgradeFlow(flow, data = {}) {
+  const stageMap = {
+    queued: "upgrade_check",
+    download: "upgrade_download",
+    backup: "upgrade_backup",
+    apply: "upgrade_apply",
+    rollback: "upgrade_rollback",
+    restart: "upgrade_restart",
+  };
+  const node = stageMap[data.stage] || "upgrade_apply";
+  flow.step(node);
+  const message = data.message || data.stage || "升级中";
+  if (data.backup_dir) {
+    setProjectActionStatus(`升级状态：${message}；备份：${data.backup_dir}`);
+  } else {
+    setProjectActionStatus(`升级状态：${message}`);
+  }
+}
+
+async function waitForServiceRestore() {
+  setProjectActionStatus("服务正在重启，等待恢复...");
+  const deadline = Date.now() + 90 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Keep waiting while the old process exits and the restart helper starts the new one.
+    }
+    await delay(1800);
+  }
+  setBusy(false);
+  setProjectActionStatus("服务重启等待超时，请手动刷新页面。", "warn");
 }
 
 async function loadProviders() {
@@ -3328,27 +3819,6 @@ async function loadObservability() {
     loadLessonSuggestions(),
     loadWiki(),
   ]);
-}
-
-async function runNeedAuditPreview(message) {
-  try {
-    const res = await fetch("/api/writing/need-audit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        task: flowTask(),
-        chapter: currentChapter(),
-        novel_id: currentProject,
-        use_provider_source: aiToggle.checked,
-      }),
-    });
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "需求审计失败");
-    renderNeedAudit(data.audit || {});
-  } catch {
-    auditCard.textContent = "需求审计失败";
-  }
 }
 
 async function loadFiles() {
@@ -4786,13 +5256,6 @@ composer.addEventListener("submit", async (event) => {
     },
   })) return;
   const chapter = currentChapter();
-  const auditFlow = createOperationFlow(["need_audit"]);
-  try {
-    await runNeedAuditPreview(message);
-    auditFlow.done();
-  } catch {
-    auditFlow.fail();
-  }
   clearAcceptanceControls();
   addMessage("user", message, "创作", { persist: true });
   messageInput.value = "";
@@ -4853,6 +5316,9 @@ projectIdInput.addEventListener("keydown", (event) => {
 });
 deleteProjectBtn.addEventListener("click", deleteCurrentProject);
 doctorBtn.addEventListener("click", runDoctor);
+if (upgradeBtn) {
+  upgradeBtn.addEventListener("click", checkAppUpgrade);
+}
 if (chatBtn) {
   chatBtn.addEventListener("click", runPlainChat);
 }
@@ -4927,6 +5393,41 @@ document.addEventListener("click", async (event) => {
   if (importReferenceBtn) {
     event.preventDefault();
     referenceImportInput().click();
+    return;
+  }
+
+  const referenceRefreshBtn = event.target.closest("[data-reference-workbench-refresh]");
+  if (referenceRefreshBtn) {
+    event.preventDefault();
+    await refreshReferenceWorkbench();
+    return;
+  }
+
+  const referenceRecallBtn = event.target.closest("[data-reference-recall-test]");
+  if (referenceRecallBtn) {
+    event.preventDefault();
+    await runReferenceRecallTest();
+    return;
+  }
+
+  const referenceExtractBtn = event.target.closest("[data-reference-extract-full]");
+  if (referenceExtractBtn) {
+    event.preventDefault();
+    await startReferenceFullExtract();
+    return;
+  }
+
+  const referencePublishBtn = event.target.closest("[data-reference-publish]");
+  if (referencePublishBtn) {
+    event.preventDefault();
+    await publishReferenceEvidence();
+    return;
+  }
+
+  const taskCenterRefreshBtn = event.target.closest("[data-task-center-refresh]");
+  if (taskCenterRefreshBtn) {
+    event.preventDefault();
+    await refreshTaskCenter();
     return;
   }
 
@@ -5062,6 +5563,12 @@ document.addEventListener("click", async (event) => {
   const statusTab = event.target.closest("[data-status-tab]");
   if (statusTab) {
     switchStatusTab(statusTab.dataset.statusTab);
+  }
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.closest("#referenceNovelSelect")) {
+    renderProjectInventory(projectInventoryState || {});
   }
 });
 

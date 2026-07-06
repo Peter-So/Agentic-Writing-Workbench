@@ -55,3 +55,6 @@ projects/writing/novels/*/delegate_context*.txt
 
 # Keep empty scaffold markers.
 !**/.gitkeep
+data/writing_task_center/
+data/chat_memory.db-shm
+data/chat_memory.db-wal

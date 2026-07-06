@@ -4,19 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Writing 协作界面</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260705-multi-dim-restore" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260706-frontend-prune-upgrade" />
   </head>
   <body>
     <main class="shell">
       <aside class="rail">
-        <header class="brand">
-          <div class="brand-mark">W</div>
-          <div>
-            <h1>Writing</h1>
-            <p>协作创作界面</p>
-          </div>
-        </header>
-
         <section class="panel project-panel">
           <div class="project-card-head">
             <div class="panel-title">项目</div>
@@ -43,17 +35,11 @@
           <div id="projectInventory" class="project-inventory" aria-live="polite"></div>
           <div id="projectActionStatus" class="muted-line"></div>
         </section>
-
-        <section class="panel">
-          <div class="panel-title">文件</div>
-          <div id="fileTree" class="file-tree"></div>
-        </section>
       </aside>
 
       <section class="main">
         <header class="topbar">
           <div>
-            <div class="eyebrow">默认界面</div>
             <h2 id="workspaceTitle">创作驾驶舱</h2>
           </div>
           <div class="model-bar" aria-label="模型选择">
@@ -63,6 +49,7 @@
             <label><span>生图</span><select id="imageModelSelect" class="select model-select"></select></label>
           </div>
           <nav class="top-actions">
+            <button id="upgradeBtn" class="button" type="button" title="检查 GitHub 最新版本，并在确认后执行备份、升级与重启。">更新</button>
             <button id="doctorBtn" class="button" type="button">诊断</button>
           </nav>
         </header>
@@ -155,16 +142,6 @@
           <div id="missionCard" class="mission-card muted-line">加载中</div>
         </section>
 
-        <section class="panel status-card audit-panel">
-          <div class="panel-title">需求审计</div>
-          <div id="auditCard" class="audit-card muted-line">尚未审计</div>
-        </section>
-
-        <section class="panel status-card sop-panel">
-          <div class="panel-title">流程规范</div>
-          <div id="sopCard" class="sop-card muted-line">加载中</div>
-        </section>
-
         <section class="panel status-card observe-panel">
           <div class="panel-title">观察</div>
           <div class="status-tabs" role="tablist" aria-label="观察面板">
@@ -208,9 +185,14 @@
             </div>
           </div>
         </section>
+
+        <section class="panel status-card file-panel">
+          <div class="panel-title">文件</div>
+          <div id="fileTree" class="file-tree"></div>
+        </section>
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260705-multi-dim-restore"></script>
+    <script src="/static/app.js?v=20260706-frontend-prune-upgrade"></script>
   </body>
 </html>

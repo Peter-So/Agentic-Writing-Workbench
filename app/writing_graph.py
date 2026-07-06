@@ -1234,6 +1234,33 @@ def node_draft_assemble(state: WritingState) -> WritingState:
         actions.append(f"material_profile_failed({type(exc).__name__})")
         emit_stage("material_profile", "done", error=type(exc).__name__)
 
+    emit_stage("context_broker", "running")
+    try:
+        from app.writing_context_broker import attach_context_broker
+
+        bundle = attach_context_broker(
+            bundle,
+            task=task,
+            project_kind=bundle.get("project_kind") or state.get("project_kind"),
+        )
+        broker_summary = (bundle.get("context_broker") or {}).get("summary") or {}
+        actions.append(
+            "context_broker("
+            f"selected={broker_summary.get('selected', 0)},"
+            f"dropped={broker_summary.get('dropped', 0)})"
+        )
+        emit_stage(
+            "context_broker",
+            "done",
+            selected=broker_summary.get("selected", 0),
+            dropped=broker_summary.get("dropped", 0),
+            tokens=broker_summary.get("estimated_tokens", 0),
+        )
+    except Exception as exc:
+        bundle["context_broker"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        actions.append(f"context_broker_failed({type(exc).__name__})")
+        emit_stage("context_broker", "done", error=type(exc).__name__)
+
     try:
         material_health = writing_tools.assess_material_health(bundle, task=task, chapter=chapter)
         bundle["material_health"] = material_health

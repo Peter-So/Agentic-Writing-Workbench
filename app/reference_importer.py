@@ -132,6 +132,125 @@ def import_reference_novel(
     }
 
 
+def list_imported_reference_novels() -> dict[str, Any]:
+    """List imported full reference novels and their extraction status."""
+    titles: dict[str, dict[str, Any]] = {}
+    payload = _read_json(NOVEL_LIST)
+    for item in (payload.get("novels") if isinstance(payload, dict) else []) or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if title:
+            titles[title] = {
+                "title": title,
+                "source": item.get("source") or "",
+                "imported_at": item.get("imported_at") or "",
+            }
+    if WORK_NOVELS_DIR.is_dir():
+        for path in sorted(WORK_NOVELS_DIR.iterdir()):
+            if path.is_dir() and (path / "novel.txt").is_file():
+                titles.setdefault(path.name, {"title": path.name, "source": "", "imported_at": ""})
+    if REFERENCE_NOVELS_DIR.is_dir():
+        for path in sorted(REFERENCE_NOVELS_DIR.glob("*.txt")):
+            titles.setdefault(path.stem, {"title": path.stem, "source": _rel(path), "imported_at": ""})
+
+    novels = []
+    for title in sorted(titles):
+        work_path = _work_novel_path(title)
+        reference_path = _reference_novel_path(title)
+        source_path = work_path if work_path.is_file() else reference_path
+        total_chars = _text_char_count(source_path) if source_path.is_file() else 0
+        extraction = _anchor_analysis_status(title)
+        novels.append({
+            **titles[title],
+            "title": title,
+            "available": source_path.is_file(),
+            "work_path": _rel(work_path) if work_path.is_file() else "",
+            "reference_path": _rel(reference_path) if reference_path.is_file() else "",
+            "total_chars": total_chars,
+            "estimated_seconds": estimate_reference_extract_seconds(total_chars),
+            "extraction": extraction,
+            "status": "extracted" if extraction.get("extracted") else ("ready" if source_path.is_file() else "missing_source"),
+            "can_extract": source_path.is_file() and not extraction.get("extracted"),
+        })
+    return {"ok": True, "total": len(novels), "novels": novels}
+
+
+def estimate_reference_extract_seconds(total_chars: int) -> int:
+    """Rough local extraction estimate used by the Web UI before starting a job."""
+    chars = max(0, int(total_chars or 0))
+    if chars <= 0:
+        return 30
+    return max(30, int(45 + chars / 2200))
+
+
+def extract_reference_full_book(
+    *,
+    title: str,
+    progress: Progress | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Run full-book multidimensional extraction for one imported reference novel."""
+    resolved = _resolve_imported_title(title)
+    if not resolved:
+        raise ValueError("请选择已导入参考小说")
+    source_path = _ensure_work_novel(resolved)
+    total_chars = _text_char_count(source_path)
+    before = _anchor_analysis_status(resolved)
+    if before.get("extracted") and not force:
+        return {
+            "ok": True,
+            "changed": False,
+            "title": resolved,
+            "status": "skipped",
+            "reason": "already_extracted",
+            "message": "该小说整本多维数据已入库，已跳过重复抽取。",
+            "estimated_seconds": estimate_reference_extract_seconds(total_chars),
+            "extraction": before,
+        }
+
+    _emit(progress, "reference_full_extract_prepare", "准备整本抽取", "running", {
+        "title": resolved,
+        "total_chars": total_chars,
+        "estimated_seconds": estimate_reference_extract_seconds(total_chars),
+    })
+    _emit(progress, "reference_import_analyze", "整本多维抽取", "running", {"title": resolved})
+    analysis_result = _run_json(
+        [_python(), str(ANALYZER), resolved],
+        cwd=NOVEL_ACQ_DIR,
+        timeout=900,
+        env_overrides=_reference_dimension_env(),
+    )
+    if analysis_result.get("error"):
+        raise RuntimeError(str(analysis_result["error"]))
+    _emit(progress, "reference_import_analyze", "整本多维抽取", "done", analysis_result)
+
+    _emit(progress, "reference_import_five_dim", "写入多维参考库", "running")
+    anchor_analysis = _synthesize_anchor_analysis(resolved)
+    _emit(progress, "reference_import_five_dim", "写入多维参考库", "done", {
+        "segments": anchor_analysis.get("total_dimension_matches", 0),
+        "dimensions": anchor_analysis.get("dimension_coverage", {}),
+    })
+
+    _emit(progress, "reference_import_index", "重建语义索引", "running")
+    _run_text([_python(), str(SEMANTIC_SEARCH), "--build"], cwd=NOVEL_ACQ_DIR, timeout=900)
+    _emit(progress, "reference_import_index", "重建语义索引", "done", {
+        "index": _rel(NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl"),
+    })
+    extraction = _anchor_analysis_status(resolved)
+    return {
+        "ok": True,
+        "changed": True,
+        "title": resolved,
+        "status": "completed",
+        "analysis": analysis_result,
+        "dimension_coverage": anchor_analysis.get("dimension_coverage", {}),
+        "total_dimension_matches": anchor_analysis.get("total_dimension_matches", 0),
+        "estimated_seconds": estimate_reference_extract_seconds(total_chars),
+        "extraction": extraction,
+    }
+
+
 def backfill_reference_method_dimensions(
     *,
     rebuild_index: bool = False,
@@ -788,10 +907,60 @@ def _extract_method_dimensions(
     return dims
 
 
-def _read_work_novel_text(title: str) -> str:
-    path = WORK_NOVELS_DIR / title / "novel.txt"
-    if not path.exists():
+def _work_novel_path(title: str) -> Path:
+    return WORK_NOVELS_DIR / title / "novel.txt"
+
+
+def _reference_novel_path(title: str) -> Path:
+    return REFERENCE_NOVELS_DIR / f"{title}.txt"
+
+
+def _resolve_imported_title(title: str) -> str:
+    requested = str(title or "").strip()
+    if not requested:
         return ""
+    candidates = {requested, _safe_path_part(requested), _title_from_filename(f"{requested}.txt")}
+    available: set[str] = set()
+    if WORK_NOVELS_DIR.is_dir():
+        available.update(path.name for path in WORK_NOVELS_DIR.iterdir() if path.is_dir())
+    if REFERENCE_NOVELS_DIR.is_dir():
+        available.update(path.stem for path in REFERENCE_NOVELS_DIR.glob("*.txt") if path.is_file())
+    payload = _read_json(NOVEL_LIST)
+    novels = payload.get("novels") if isinstance(payload, dict) else []
+    for item in novels if isinstance(novels, list) else []:
+        if isinstance(item, dict) and str(item.get("title") or "").strip():
+            available.add(str(item.get("title")).strip())
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+    for item in sorted(available):
+        if item.lower() == requested.lower():
+            return item
+    return ""
+
+
+def _ensure_work_novel(title: str) -> Path:
+    work_path = _work_novel_path(title)
+    if work_path.is_file():
+        return work_path
+    reference_path = _reference_novel_path(title)
+    if not reference_path.is_file():
+        raise FileNotFoundError(f"未找到参考小说原文：{title}")
+    work_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(reference_path, work_path)
+    return work_path
+
+
+def _text_char_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    try:
+        return len(_read_text_file(path))
+    except Exception:
+        return 0
+
+
+def _read_text_file(path: Path) -> str:
     raw = path.read_bytes()
     for enc in ("utf-8", "gb18030", "gbk", "gb2312"):
         try:
@@ -799,6 +968,29 @@ def _read_work_novel_text(title: str) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _anchor_analysis_status(title: str) -> dict[str, Any]:
+    path = EXTRACTED_DIR / title / "anchor_analysis.json"
+    payload = _read_json(path)
+    coverage = payload.get("dimension_coverage") if isinstance(payload, dict) else {}
+    if not isinstance(coverage, dict):
+        coverage = {}
+    total_matches = int(payload.get("total_dimension_matches") or 0) if isinstance(payload, dict) else 0
+    return {
+        "extracted": path.is_file() and total_matches > 0,
+        "path": _rel(path) if path.is_file() else "",
+        "dimension_coverage": coverage,
+        "total_dimension_matches": total_matches,
+        "updated_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds") if path.is_file() else "",
+    }
+
+
+def _read_work_novel_text(title: str) -> str:
+    path = _work_novel_path(title)
+    if not path.exists():
+        return ""
+    return _read_text_file(path)
 
 
 def _method_paragraphs(text: str) -> list[str]:

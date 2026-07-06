@@ -608,15 +608,36 @@ class CleanupRequest(BaseModel):
     include_global: bool = False
 
 
-class AppUpgradeRequest(BaseModel):
-    host: str = Field(default="127.0.0.1")
-    port: int = Field(default=7861, ge=1, le=65535)
-    version: str = Field(default="")
+class ReferenceRecallTestRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    dimensions: list[str] = Field(default_factory=list)
+    novel_filter: str = Field(default="")
+    top_k: int = Field(default=8, ge=1, le=30)
+    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
+
+
+class ReferencePublishRequest(BaseModel):
+    title: str = Field(default="参考小说工作台报告", max_length=120)
+    query: str = Field(default="")
+    dimensions: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
+
+
+class ReferenceExtractRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
 
 
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+class AppUpgradeRequest(BaseModel):
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=7861, ge=1, le=65535)
+    version: str = Field(default="")
 
 
 @app.get("/api/app-upgrade/check")
@@ -647,7 +668,6 @@ def app_upgrade_apply(req: AppUpgradeRequest) -> dict[str, Any]:
         return start_upgrade(host=host, port=req.port, version=req.version.strip())
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
 
 @app.get("/api/writing/status")
 def status(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
@@ -698,7 +718,50 @@ def status(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
             }
     except Exception:
         data["collaboration"] = {}
+    try:
+        from app.project_entity_registry import registry_summary
+
+        data["entity_registry"] = registry_summary(nid)
+    except Exception as exc:
+        data["entity_registry"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        from app.writing_task_center import task_center
+
+        tc = task_center(nid, limit=12)
+        data["task_center"] = {
+            "ok": tc.get("ok", False),
+            "summary": tc.get("summary") or {},
+            "items": (tc.get("items") or [])[:6],
+        }
+    except Exception as exc:
+        data["task_center"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        from app.reference_importer import list_imported_reference_novels
+
+        data["reference_workbench"] = list_imported_reference_novels()
+    except Exception as exc:
+        data["reference_workbench"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "novels": []}
     return data
+
+
+@app.get("/api/writing/task-center")
+def writing_task_center_endpoint(
+    novel_id: str = Query(DEFAULT_NOVEL_ID),
+    limit: int = Query(30, ge=1, le=80),
+) -> dict[str, Any]:
+    from app.writing_task_center import task_center
+
+    return task_center(novel_id, limit=limit)
+
+
+@app.get("/api/writing/entity-registry")
+def writing_entity_registry_endpoint(
+    novel_id: str = Query(DEFAULT_NOVEL_ID),
+    rebuild: bool = Query(False),
+) -> dict[str, Any]:
+    from app.project_entity_registry import load_entity_registry
+
+    return load_entity_registry(novel_id, rebuild=rebuild, persist=rebuild)
 
 
 @app.get("/api/writing/pending-status")
@@ -981,11 +1044,23 @@ async def import_reference_novel_stream(
     novel_id: str = Query(DEFAULT_NOVEL_ID),
 ) -> StreamingResponse:
     from app.reference_importer import MAX_REFERENCE_NOVEL_BYTES, import_reference_novel
+    from app.writing_task_center import record_task_event
 
     filename = Path(file.filename or "reference.txt").name
     content = await file.read(MAX_REFERENCE_NOVEL_BYTES + 1)
     if len(content) > MAX_REFERENCE_NOVEL_BYTES:
         raise HTTPException(status_code=413, detail="文件超过 120MB 上限")
+    nid = normalize_novel_id(novel_id)
+    task_id = f"reference_import_{int(time.time())}_{abs(hash(filename)) % 10000}"
+    record_task_event(
+        task_type="reference_import",
+        task_id=task_id,
+        status="running",
+        label=f"导入参考小说：{filename}",
+        novel_id=nid,
+        source="reference_import_stream",
+        details={"filename": filename, "bytes": len(content)},
+    )
 
     def events():
         q: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -1001,9 +1076,28 @@ async def import_reference_novel_stream(
         def run() -> None:
             try:
                 data = import_reference_novel(filename=filename, content=content, progress=progress)
-                data["project_status"] = project_status(normalize_novel_id(novel_id))
+                data["project_status"] = project_status(nid)
+                data["task_id"] = task_id
+                record_task_event(
+                    task_type="reference_import",
+                    task_id=task_id,
+                    status="completed",
+                    label=f"已导入参考小说：{data.get('title') or filename}",
+                    novel_id=nid,
+                    source="reference_import_stream",
+                    details={"filename": filename, "title": data.get("title"), "warnings": data.get("warnings") or []},
+                )
                 q.put(("done", data))
             except Exception as exc:
+                record_task_event(
+                    task_type="reference_import",
+                    task_id=task_id,
+                    status="failed",
+                    label=f"参考小说导入失败：{filename}",
+                    novel_id=nid,
+                    source="reference_import_stream",
+                    details={"filename": filename, "error": f"{type(exc).__name__}: {exc}"},
+                )
                 q.put(("error", {"message": f"{type(exc).__name__}: {exc}"}))
             finally:
                 q.put(("end", {}))
@@ -1016,6 +1110,139 @@ async def import_reference_novel_stream(
             yield _web_sse(event, data)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.get("/api/writing/reference-workbench")
+def reference_workbench(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
+    from app.reference_importer import list_imported_reference_novels
+    from app.writing_tools import METHOD_REFERENCE_DIMENSION_PROFILES, project_inventory
+
+    inventory = project_inventory(novel_id)
+    dimensions = ((inventory.get("five_dim") or {}).get("dimensions") or {})
+    dimension_rows = [
+        {
+            "id": key,
+            "label": (METHOD_REFERENCE_DIMENSION_PROFILES.get(key) or {}).get("label") or key,
+            "use": (METHOD_REFERENCE_DIMENSION_PROFILES.get(key) or {}).get("use") or "",
+            "count": count,
+            "group": "method" if str(key).startswith("method_") else "basic",
+        }
+        for key, count in sorted(dimensions.items())
+    ]
+    return {
+        "ok": True,
+        "novel_id": normalize_novel_id(novel_id),
+        "inventory": inventory,
+        "reference_novels": list_imported_reference_novels(),
+        "dimensions": dimension_rows,
+        "cost_model": {
+            "chars_per_token": 2,
+            "low_chars": 80_000,
+            "medium_chars": 300_000,
+            "high_chars": 1_000_000,
+        },
+    }
+
+
+@app.post("/api/writing/reference-workbench/extract-async")
+def reference_workbench_extract_async(req: ReferenceExtractRequest) -> dict[str, Any]:
+    from app.reference_extract_jobs import reference_extract_jobs
+
+    job = reference_extract_jobs.start(title=req.title, novel_id=req.novel_id)
+    return {"ok": True, "job": job.snapshot()}
+
+
+@app.get("/api/writing/reference-workbench/extract-job/{job_id}")
+def reference_workbench_extract_job(job_id: str) -> dict[str, Any]:
+    from app.reference_extract_jobs import reference_extract_jobs
+
+    job = reference_extract_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="参考小说抽取任务不存在")
+    return job.snapshot()
+
+
+@app.post("/api/writing/reference-workbench/recall-test")
+def reference_workbench_recall_test(req: ReferenceRecallTestRequest) -> dict[str, Any]:
+    from app.writing_tools import search_references
+
+    refs = search_references(
+        req.query,
+        dimension=req.dimensions or None,
+        top_k=req.top_k,
+        novel_id=req.novel_id,
+    )
+    novel_filter = req.novel_filter.strip()
+    results = refs.get("results") or []
+    if novel_filter:
+        results = [
+            item for item in results
+            if novel_filter in str(item.get("novel") or item.get("book") or "")
+        ]
+    evidence = []
+    for idx, item in enumerate(results[:req.top_k], start=1):
+        evidence.append({
+            "rank": idx,
+            "novel": item.get("novel") or item.get("book") or "",
+            "anchor": item.get("anchor") or item.get("anchor_label") or "",
+            "dimension": item.get("dimension") or "",
+            "score": item.get("score") or 0,
+            "matched_keywords": item.get("matched_keywords") or [],
+            "text": item.get("text") or item.get("content") or "",
+            "context": item.get("context") or "",
+            "method_label": item.get("method_label") or "",
+            "method_use": item.get("method_use") or "",
+        })
+    return {
+        "ok": True,
+        "engine": refs.get("engine") or "",
+        "index_ready": refs.get("index_ready"),
+        "notice": refs.get("notice") or "",
+        "query": req.query,
+        "dimensions": req.dimensions,
+        "total": len(evidence),
+        "evidence": evidence,
+    }
+
+
+@app.post("/api/writing/reference-workbench/publish")
+def reference_workbench_publish(req: ReferencePublishRequest) -> dict[str, Any]:
+    from app.project_paths import outputs_dir
+
+    nid = normalize_novel_id(req.novel_id)
+    title = (req.title or "参考小说工作台报告").strip()[:120]
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = outputs_dir(nid) / f"reference-workbench-{stamp}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"# {title}",
+        "",
+        f"- 查询：{req.query or '未填写'}",
+        f"- 维度：{', '.join(req.dimensions) if req.dimensions else '全部'}",
+        f"- 证据数：{len(req.evidence)}",
+        "",
+        "## 证据回溯",
+        "",
+    ]
+    for item in req.evidence[:50]:
+        lines.extend([
+            f"### {item.get('rank', '')}. {item.get('novel') or '未知小说'} / {item.get('dimension') or '未知维度'}",
+            "",
+            f"- 锚点：{item.get('anchor') or ''}",
+            f"- 分数：{item.get('score') or 0}",
+            f"- 技法：{item.get('method_label') or item.get('method_use') or ''}",
+            "",
+            str(item.get("text") or "").strip(),
+            "",
+            str(item.get("context") or "").strip(),
+            "",
+        ])
+    target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return {
+        "ok": True,
+        "path": str(target.relative_to(ROOT)).replace("\\", "/"),
+        "message": "参考小说工作台报告已发布到项目输出目录。",
+    }
 
 
 @app.get("/api/ai-providers/status")
