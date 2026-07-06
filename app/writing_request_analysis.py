@@ -54,6 +54,37 @@ def _clean_int_list(value: Any) -> list[int]:
     return out[:8]
 
 
+_CN_NUMBERS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _clean_chapter_hint(text: str) -> int | None:
+    match = re.search(r"第\s*(\d{1,4})\s*[章节回]", text or "")
+    if match:
+        return _clean_int(match.group(1))
+    match = re.search(r"第\s*([零〇一二两三四五六七八九十百]{1,6})\s*[章节回]", text or "")
+    if not match:
+        return None
+    raw = match.group(1)
+    if raw == "十":
+        return 10
+    if "百" in raw:
+        left, _, right = raw.partition("百")
+        total = (_CN_NUMBERS.get(left, 1) or 1) * 100
+        if right:
+            tail = _clean_chapter_hint(f"第{right}章")
+            total += tail or 0
+        return total if total > 0 else None
+    if "十" in raw:
+        left, _, right = raw.partition("十")
+        total = (_CN_NUMBERS.get(left, 1) or 1) * 10
+        total += _CN_NUMBERS.get(right, 0) if right else 0
+        return total if total > 0 else None
+    return _CN_NUMBERS.get(raw)
+
+
 def _clean_str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -63,6 +94,31 @@ def _clean_str_list(value: Any) -> list[str]:
         if text and text not in out:
             out.append(text[:80])
     return out[:10]
+
+
+def _fallback_novel_task(message: str, task: str | None) -> str:
+    task_key = str(task or "").strip().lower()
+    if task_key and task_key != "generic":
+        return task_key
+    text = message or ""
+    prose_signal = bool(re.search(r"(正文|章节正文|成品内容|第\s*[\d零〇一二两三四五六七八九十百]+\s*[章节回])", text))
+    if re.search(r"(精修|润色|修改|改写|调整|重写).{0,24}(正文|段落|片段|行|句子|章节|文字)", text):
+        return "fix"
+    if re.search(r"(扩写|续写|补写).{0,24}(正文|章节|片段|段落|场景|内容)", text):
+        return "expansion"
+    if prose_signal and re.search(r"(写|编写|生成|创作|完成|输出|续写|扩写)", text):
+        return "prose"
+    if re.search(r"(大纲|章节概述|章节设计)", text) and not prose_signal:
+        return "outline"
+    if re.search(r"(情节|剧情|节拍|桥段|伏笔)", text):
+        return "beat_sheet"
+    if re.search(r"(人物|角色|人设)", text):
+        return "character"
+    if re.search(r"(世界观|世界设定|规则体系)", text):
+        return "world"
+    if re.search(r"(设定|基础设定|题材|基调)", text):
+        return "setting"
+    return task_key or "prose"
 
 
 def analyze_writing_request(
@@ -229,15 +285,24 @@ def fallback_request_analysis(*, message: str, mode: str, task: str, chapter: in
                               project_progress: dict[str, Any] | None = None,
                               novel_id: str | None = None) -> dict[str, Any]:
     """Non-routing fallback: preserve user/UI state when the LLM analyzer fails."""
+    inferred_task = task or "prose"
+    target_chapter = chapter or _clean_chapter_hint(message)
+    try:
+        from app.project_kinds import STRONG_NOVEL_KIND
+
+        if project_kind == STRONG_NOVEL_KIND:
+            inferred_task = _fallback_novel_task(message, task)
+    except Exception:
+        pass
     analysis = {
         "ok": False,
         "source": "fallback",
         "intent": mode or "draft",
-        "task": task or "prose",
+        "task": inferred_task,
         "creative_stage": "",
         "deliverable": "generation",
-        "target_chapter": chapter,
-        "context_chapters": [chapter] if chapter else [],
+        "target_chapter": target_chapter,
+        "context_chapters": [target_chapter] if target_chapter else [],
         "flow_entry": "draft_entry",
         "generator_instruction": "",
         "answer_style": "",
@@ -248,7 +313,7 @@ def fallback_request_analysis(*, message: str, mode: str, task: str, chapter: in
         "target_sections": [],
         "impact_reason": "",
         "confidence": 0,
-        "reason": "LLM 请求理解失败，保留原始 UI 参数。",
+        "reason": "LLM 请求理解失败，使用项目类型与用户文本进行轻量兜底路由。",
         "error": error,
     }
     try:

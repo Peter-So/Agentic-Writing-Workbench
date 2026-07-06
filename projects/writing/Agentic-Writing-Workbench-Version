@@ -1,0 +1,180 @@
+# Agentic Writing Workbench Version Alignment
+
+本文件记录 `E:\agent_work\projects\writing` 工作项目与公开仓库
+`Agentic-Writing-Workbench` 的功能改造对齐关系。
+
+## 当前对齐版本
+
+- 当前对齐版本：Agentic-Writing-Workbench v0.1.8
+- 对齐日期：2026-07-06
+- 对齐范围：Context Broker、任务中心、参考小说工作台整本抽取、项目实体 Registry、多维参考召回测试与证据发布、Web UI 布局与冗余清理、provider 页面复制抓取稳定性、任务状态/计时/恢复闭环、provider 内容可编辑并回写、公开库前端路径差异和 Web 更新功能保留
+- 对应 TRD：默认执行清单与 CodeGraph 事实驱动流程，属于 writing 创作流程增强并同步到公开仓库
+
+## v0.1.0
+
+公开发布初始版本：
+
+- 保留干净项目框架与三类项目脚手架：小说、电影脚本、随想。
+- 清理项目独有资料库、运行缓存、敏感 LLM 配置。
+- 提供 Quick Start、README、README.zh-CN、License、TRADEMARKS。
+- 保留公共技能、Web UI、LangGraph 创作流程、项目 Wiki、LLM 配置框架。
+
+## v0.1.1
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- Web UI 左侧项目卡片新增绿色“流程”按钮。
+- 主对话区新增当前项目类型的 LangGraph 流程可视化页面。
+- 流程图按项目类型差异化展示，不再三类项目共用同一张图：
+  - 小说：完整创作链路。
+  - 电影脚本：补充影像生图链路，包括分镜提示词、生图参数、生成画面、影像归档。
+  - 随想：精简为灵感材料、随想成稿、确认沉淀链路。
+- 流程图使用 Mermaid 风格画布展示节点、边、条件分支和审查回环。
+- 画布支持鼠标左键拖拽，并限制在流程图边界内。
+- 默认打开流程图时放大显示，顶部对齐、左右居中。
+- 右上角提供悬浮 `+` / `-` 缩放按钮。
+- 后端新增 `/api/writing/graph-view`，由项目类型返回对应流程图 profile。
+
+## v0.1.2
+
+公开仓库新增发布工程能力：
+
+- 新增 `scripts/upgrade-to-latest.py`，支持从 GitHub Release 一键升级框架代码。
+- 新增 `upgrade-manifest.json`，明确可升级框架文件与受保护用户资产。
+- 新增自动备份目录 `backups/upgrades/<timestamp>/`，记录本次升级触碰过的框架文件。
+- 新增 `--rollback` 回滚能力，可按备份清单恢复升级前状态。
+- 新增 `--dry-run` 预演能力，用户可先查看会更新哪些文件。
+- 新增 `scripts/test-upgrade-workflow.py`，验证 dry-run、升级、备份、回滚与用户数据保护。
+- 明确升级不会覆盖 `.env.shared`、`.env.local`、`projects/`、`data/`、`logs/`、`tmp/`、`backups/`。
+
+说明：本版本是 Agentic-Writing-Workbench 公开项目的发布维护能力，不属于 writing 工作项目的创作功能改造。
+
+## v0.1.3
+
+公开仓库新增 Web 端升级闭环：
+
+- Web UI 顶部新增“更新”入口，可检查 GitHub 最新 Release 并展示新版内容。
+- 用户确认后，由后端执行下载新版、创建备份、更新框架文件、协调重启。
+- 新增 `/api/app-upgrade/check`、`/api/app-upgrade/status`、`/api/app-upgrade/apply`。
+- 新增 `app/app_upgrade.py` 管理版本检查、后台升级、状态持久化、失败回滚和重启协调。
+- 新增 `scripts/restart-workbench.py`，用于升级或回滚后等待旧服务退出并重新启动 Web 服务。
+- 升级前新增后端任务门禁，检查 provider job、未完成 invocation、pending intent；存在运行中或待确认/归档任务时阻止升级。
+- `scripts/upgrade-to-latest.py` 在复制框架文件失败时会基于本次备份清单自动回滚。
+- Web UI 状态流展示检查版本、下载新版、创建备份、更新框架、失败回滚、重启服务。
+
+说明：纯 v0.1.2 不包含 Web 更新入口，因此从 v0.1.2 到 v0.1.3 的真实升级测试使用 v0.1.2 CLI 升级器完成；Web UI 升级链路从 v0.1.3 开始可用于后续版本。
+
+## v0.1.4
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- 小说创作新增阶段 profile：概念、基础设定、世界观、人物、大纲、情节、正文、扩写、修复。
+- LLM 意图分析后输出 `creative_stage`、`task`、`flow_complexity`、`node_flow`、`material_sections`，用于切换材料组装策略。
+- 前期规划任务走精简流程，聚焦结构文件、项目 Wiki 与写作技法，不误写成章节正文。
+- 正文、扩写、修复任务走完整正文流程，补充大纲、前情、人物、风格、参考小说和连续性记忆。
+- 精修/扩写正文时新增正文定位，记录章节正文文件、行号、锚点和待改片段。
+- 项目 Wiki 增加两类流程事件：LLM 意图分析后的路由索引、确认归档后的归档摘要。
+- 外发任务单、本地生成 prompt、材料索引、pending intent 和 invocation 事件同步携带阶段与正文定位信息。
+- Web 流程图新增“阶段标识”“材料策略切换”“Wiki 路由索引”“归档写回”“Wiki 归档摘要”等节点。
+- Web 提问框新增空内容/空字符前端禁用；后端聊天、创作、流式创作接口二次校验有效文本。
+- 修复 `fix`、`expansion` 被错误归一化为普通 `prose` 的问题。
+
+## v0.1.5
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- 创作链路新增阶段材料白名单过滤：以 `stage_profile.material_sections` 作为唯一来源，控制每个小说阶段可进入 prompt 的材料范围。
+- 概念、基础设定、世界观、人物等前期阶段会自动移除正文阶段材料，避免参考小说、五维库、正文定位、跨章节记忆、项目资产等非阶段材料污染。
+- 大纲、情节、正文等阶段按各自 profile 保留需要的结构材料、连续性材料、人物材料、项目 Wiki、技法或参考小说材料。
+- 创作按钮链路在 LLM 意图分析后扫描当前项目 `资产`、`参考材料` 目录，并把相关文本摘录写入材料包。
+- 本地生成 prompt 和 provider 外发任务单都能使用过滤后的项目资产/参考材料。
+- 没有项目专属材料组装脚本时，generic fallback 会补充参考小说/五维库检索，避免新项目创作拿不到公共参考材料。
+- 保持聊天按钮边界：普通聊天不做意图分析、不组装材料、不多调用一次 LLM。
+
+## v0.1.6
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- 多维参考库新增基础维度 `intelligence` 与 method_* 创作方法维度。
+- 参考小说导入、基础维度回填、method_* 回填统一单维度默认上限为 48 条。
+- 新增多维回填脚本：`scripts/backfill-reference-dimensions.py`、`scripts/backfill-reference-method-dimensions.py`。
+- 新增公共创作方法知识库，沉淀小说创作目标定位、章节功能、读者体验、研究细节和去 AI 味方法。
+- 创作链路新增方法论上下文、创作增强卡、状态卡/伏笔账本，并由阶段 profile 决定是否注入。
+- Web UI 参考库展示从五维统计调整为多维统计，补充智性维度和 method_* 维度。
+- 本地生成 prompt 和 provider 外发任务单新增交付边界净化，旧来源标注指令只保留内部追溯，不污染用户可采纳正文。
+- provider 外发继续只使用 `external_packet`，本地参考小说指针保留在 `local_only`。
+
+## v0.1.7
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- 新增 Context Broker，统一 Wiki、技法、多维参考、项目资产、记忆召回等上下文来源，按 required/preferred、token budget、selected/dropped 和 trace 控制材料边界。
+- 新增任务中心，聚合 pending intent、workflow status、invocation、provider job、参考小说导入/整本抽取任务和公开库升级任务标记。
+- 新增项目实体 Registry，索引章节、人物、设定、大纲、资产和参考维度，减少流程靠路径猜测。
+- 参考小说工作台支持已导入小说列表、整本多维抽取、异步计时、中断检测、召回测试和证据报告发布。
+- 创作链路在材料装配后接入 Context Broker 边界裁剪，阶段外材料不会继续污染后续 prompt。
+- Entity Registry 读取默认不落盘，只有显式 rebuild 才写入项目 Wiki。
+- Web UI 优化左中右布局：文件卡片移动到右侧并在卡片内部滚动，页面整体避免因侧栏高度产生滚动条。
+- Web UI 移除无交互/已失效展示：左侧 `Writing` 品牌卡、主对话“默认界面”、右侧固定“需求审计/流程规范”卡片、流程图打开成功文案，并清理对应前端冗余代码。
+- 同步到公开库时保留 `app/static-writing` 前端路径和 Web 更新功能，不用 writing 开发项目文件整覆盖公开库专属能力。
+- 公开库前端同步后必须重新确认 `更新` 按钮、升级卡片、`app_upgrade` 阶段和 `/api/app-upgrade/*` 调用仍存在；公开库前端三件套不应被要求与 writing 工作项目字节级完全一致。
+
+## v0.1.8
+
+本轮从 writing 工作项目同步到 Agentic-Writing-Workbench 的功能：
+
+- 网页 provider 抓取统一为“等待本轮回答完成后，点击页面回答区域提供的复制按钮”，千问、DeepSeek、豆包保持同一套抓取逻辑。
+- provider 复制按钮必须位于本轮提问坐标之后，避免点击旧回答或提问文本 hover 后出现的复制按钮。
+- 移除“复制内容不能太短”“短问直接期望答案”“复制内容必须匹配 DOM 签名”和 14 秒复制等待等误伤条件，短回答也能按页面复制结果返回。
+- 新增全局剪贴板锁，三个 provider 并发抓取时串行使用系统剪贴板，减少复制/读取互相覆盖。
+- provider 卡片内容允许用户编辑，下一步确认材料、融合、归档等动作会把前端最新内容同步回后端和任务记忆，后续节点使用用户修正后的 provider 内容。
+- 任务状态流转以主创作流程为唯一显示来源，打开网页、打开文件、打开流程图等非主流程动作不再污染任务状态栏。
+- 修复任务状态计时闪烁、双 timer 争抢、阶段未回填完成态、耗时单位过长等问题；耗时统一显示为 `s`、`m`、`h` 简写。
+- 增加继续当前任务与终止任务闭环：任务中断可恢复，终止会清理当前任务相关 pending/workflow 记忆；任务执行中输入框、聊天、创作按钮禁用。
+- 修复已进入定稿/用户确认阶段时仍显示旧 provider 确认按钮的问题，对话框内容按最新任务状态恢复。
+- 同步到公开库时继续保留公开库独有 Web 更新能力：`#upgradeBtn`、`app_upgrade` 阶段、升级卡片样式和 `/api/app-upgrade/*` 路由。
+
+## 两个项目差异与同步处理方法
+
+`E:\agent_work\projects\writing` 是功能开发和真实写作实践项目，`E:\Agentic-Writing-Workbench` 是公开发布仓库。两者不是完全镜像关系，同步时必须保留以下差异。
+
+### 1. Web 端更新功能是公开库专属发布能力
+
+- 差异说明：
+  - 公开库包含 Web 更新闭环：`app/app_upgrade.py`、`/api/app-upgrade/check`、`/api/app-upgrade/status`、`/api/app-upgrade/apply`、`scripts/upgrade-to-latest.py`、`scripts/restart-workbench.py`、`scripts/test-upgrade-workflow.py`、`upgrade-manifest.json`。
+  - 公开库前端还包含 Web 更新入口和展示逻辑：`#upgradeBtn`、`app_upgrade` 阶段、升级卡片样式、Release 内容展示、未完成任务 blockers、确认升级、状态轮询和重启等待。
+  - writing 工作项目主要承担创作流程开发，不一定包含这些公开发布维护入口。
+- 同步处理：
+  - 从 writing 同步 `app/writing_web.py` 到公开库时，禁止整文件无脑覆盖后直接发布；必须保留公开库的 `AppUpgradeRequest` 和 `/api/app-upgrade/*` 三个路由。
+  - 从 writing 同步 `app/static_writing/app.js|styles.css|index.html` 到公开库时，不能只做字节级覆盖；必须把公开库的 `#upgradeBtn`、升级流程 JS、升级卡片 CSS 重新合并到 `app/static-writing/`。
+  - 同步后必须执行 Web 更新 smoke test，确认页面存在 `#upgradeBtn`，静态 JS 包含 `/api/app-upgrade/check`，并确认 `/api/app-upgrade/check` 和 `/api/app-upgrade/status` 可用。
+  - 若公开库升级能力与 writing 创作功能发生冲突，以公开库发布维护闭环为保留项，再把 writing 的新增创作路由合并进去。
+
+### 2. 路径命名与发布清理策略不同
+
+- 差异说明：
+  - writing 工作项目内部仍使用 `app/static_writing/`；公开库按发布规范使用中横线路径 `app/static-writing/`。
+  - writing 工作项目会产生真实项目资料、参考小说抽取结果、缓存、索引和输出；公开库只保留框架、公共技能、公共知识库和脚手架。
+- 同步处理：
+  - 同步前端文件时，源路径 `app/static_writing/app.js|styles.css|index.html` 必须映射到公开库 `app/static-writing/`，并确认公开库 `app/writing_web.py` 中 `STATIC_DIR = ROOT / "app" / "static-writing"`。
+  - 从 writing 同步脚本到公开库时，文件名按公开库规范改为中横线，例如 `backfill_reference_dimensions.py` -> `backfill-reference-dimensions.py`。
+  - 禁止同步 `projects/writing/novels/*`、`projects/writing/novel-acquisition/extracted/`、`projects/writing/novel-acquisition/cache/`、`projects/writing/novel-acquisition/novels/`、运行输出、日志和私有配置。
+  - 发布前必须运行敏感信息和本地路径扫描，避免 `E:\agent_work`、`E:\writing`、API key、账号密码进入公开库。
+
+### 3. 文件名差异采用“中横线优先、旧名兼容”
+
+- 差异说明：
+  - writing 工作项目历史上存在下划线文件名，例如 `AGENT_CODING_STANDARDS.md`、`writing_technique_knowledge.json`、`novel_strong.yaml`、`semantic_search.py`、`five_dim_search.py` 和 `validate_writing_project.py`。
+  - 公开库发布侧更偏向中横线文件名，例如 `AGENT-CODING-STANDARDS.md`、`writing-technique-knowledge.json`、`novel-strong.yaml`、`semantic-search.py`、`five-dim-search.py` 和 `validate-writing-project.py`。
+- 同步处理：
+  - writing 工作项目已补齐中横线别名文件和 wrapper 脚本；运行时代码优先读取中横线文件，缺失时回退旧下划线文件。
+  - 旧文件名不得直接删除，除非另开 TRD 做完整迁移，逐项更新代码引用、脚本文档、历史项目脚本和验证命令。
+  - `project_kind=novel_strong`、`project_structure.json` 等属于数据字段或项目结构唯一来源，不因文件命名规范改为中横线。
+  - 后续从 writing 同步公开库时，优先使用中横线入口；若只改公开库文件名，不应反向破坏 writing 工作项目的历史兼容入口。
+
+## 维护约定
+
+- 工作项目新增可发布功能时，应在本文件追加版本段落。
+- 公开仓库 tag/release 不强制每次同步立即发布，但主干功能对齐应在这里记录。
+- 版本号用于说明功能对齐关系，不替代 Git tag。
+- 每次同步到公开库前，应先阅读本文件的差异说明，再做文件级合并；涉及 `app/writing_web.py`、前端静态目录、发布脚本、升级脚本时必须单独复核。

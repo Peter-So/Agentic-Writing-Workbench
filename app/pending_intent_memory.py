@@ -206,11 +206,12 @@ def latest_pending_workflow_status(
     item = _find_record(_load(SHORT_FILE), nid, track, invocation_id)
     if not item:
         return {"ok": True, "found": False}
+    workflow_status = _normalize_workflow_status_for_ui(item.get("workflow_status") or {})
     return {
         "ok": True,
         "found": True,
         "pending_intent": item,
-        "workflow_status": item.get("workflow_status") or {},
+        "workflow_status": workflow_status,
     }
 
 
@@ -628,7 +629,16 @@ def _clean_workflow_status(value: dict[str, Any]) -> dict[str, Any]:
             out["total_ms"] = min(max(int(float(total_ms)), 0), 24 * 60 * 60 * 1000)
     except Exception:
         pass
-    return out
+    return _normalize_workflow_status_for_ui(out)
+
+
+def _normalize_workflow_status_for_ui(value: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from app.workflow_status import normalize_workflow_status
+
+        return normalize_workflow_status(value)
+    except Exception:
+        return value
 
 
 def _track(value: Any) -> str:

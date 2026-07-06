@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.ai_provider_bridge import provider_status, run_provider_fanout, start_provider_job
 from app.ai_provider_jobs import jobs
 from app.ai_web_bridge import bridge
-from app.chat_history import append_message, load_before, load_by_track, load_recent, soft_delete_project_messages
+from app.chat_history import append_message, load_before, load_by_track, load_recent, soft_delete_project_messages, update_message
 from app.config import ROOT, load_runtime_config
 from app.llm_client import available_image_models, available_models, create_llm, resolve_text_model
 from app.novel_context import DEFAULT_NOVEL_ID, WRITING_ROOT, list_novels, novel_dir, novel_id_from_path, normalize_novel_id
@@ -105,6 +105,12 @@ class PendingWorkflowStatusRequest(BaseModel):
     track: str = Field(default="create")
     invocation_id: str = Field(default="")
     workflow_status: dict[str, Any] = Field(default_factory=dict)
+
+
+class PendingWorkflowTerminateRequest(BaseModel):
+    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
+    track: str = Field(default="create")
+    invocation_id: str = Field(default="")
 
 
 class FileSaveRequest(BaseModel):
@@ -558,6 +564,8 @@ class ConfirmedProviderAnswer(BaseModel):
     status: str = Field(default="success")
     result: str = Field(default="")
     files: list[str] = Field(default_factory=list)
+    edited: bool = False
+    original_result: str = Field(default="")
 
 
 class ProviderConfirmRequest(BaseModel):
@@ -592,6 +600,10 @@ class ChatLogRequest(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     track: str = Field(default="normal")
     novel_id: str = Field(default=DEFAULT_NOVEL_ID)
+
+
+class ChatLogUpdateRequest(ChatLogRequest):
+    seq: int = Field(..., ge=1)
 
 
 class ProjectCreateRequest(BaseModel):
@@ -634,6 +646,7 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+
 class AppUpgradeRequest(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=7861, ge=1, le=65535)
@@ -668,7 +681,6 @@ def app_upgrade_apply(req: AppUpgradeRequest) -> dict[str, Any]:
         return start_upgrade(host=host, port=req.port, version=req.version.strip())
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
 @app.get("/api/writing/status")
 def status(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
     nid = normalize_novel_id(novel_id)
@@ -789,6 +801,31 @@ def update_pending_workflow_status_endpoint(req: PendingWorkflowStatusRequest) -
         invocation_id=req.invocation_id,
         workflow_status=req.workflow_status,
     )
+
+
+@app.post("/api/writing/pending-status/terminate")
+def terminate_pending_workflow_status(req: PendingWorkflowTerminateRequest) -> dict[str, Any]:
+    from app.pending_intent_memory import complete_pending_intent
+
+    result = complete_pending_intent(
+        novel_id=req.novel_id,
+        track=req.track,
+        invocation_id=req.invocation_id,
+        status="terminated",
+    )
+    try:
+        from app.writing_invocations import finish_invocation
+
+        finish_invocation(
+            req.novel_id,
+            req.invocation_id,
+            status="terminated",
+            label="用户终止 pending 任务",
+            details={"track": req.track},
+        )
+    except Exception:
+        pass
+    return {"ok": True, "terminated": True, "pending_intent": result}
 
 
 @app.get("/api/writing/workflow-stages")
@@ -1292,6 +1329,33 @@ def writing_invocation(invocation_id: str, novel_id: str = Query(DEFAULT_NOVEL_I
     data = get_invocation(novel_id, invocation_id)
     if data is None:
         raise HTTPException(status_code=404, detail="任务记录不存在")
+    artifacts = data.setdefault("artifacts", {})
+    if not artifacts.get("draft"):
+        try:
+            from app.final_text_cleaner import clean_final_draft
+            from app.writing_graph import GRAPH_RECURSION_LIMIT, get_graph
+            from app.writing_memory import thread_id_for
+
+            track = str(data.get("track") or "create")
+            graph = get_graph()
+            state = graph.get_state({
+                "configurable": {"thread_id": thread_id_for(track, normalize_novel_id(novel_id))},
+                "recursion_limit": GRAPH_RECURSION_LIMIT,
+            })
+            vals = state.values or {}
+            if vals.get("invocation_id") == invocation_id:
+                draft = vals.get("draft") or (vals.get("data") or {}).get("draft") or ""
+                if draft:
+                    kind = vals.get("project_kind") or data.get("project_kind") or ""
+                    task = vals.get("task") or data.get("task") or ""
+                    artifacts["draft"] = clean_final_draft(str(draft), task=task, project_kind=kind)
+                    artifacts["draft_length"] = len(artifacts["draft"])
+                    artifacts["draft_source"] = "langgraph_state"
+                    artifacts["task"] = task or artifacts.get("task") or data.get("task")
+                    artifacts["chapter"] = vals.get("chapter") or artifacts.get("chapter") or data.get("chapter")
+                    artifacts["project_kind"] = kind or artifacts.get("project_kind")
+        except Exception:
+            pass
     return {"ok": True, "invocation": data}
 
 
@@ -1568,6 +1632,14 @@ def chat_history_before(seq: int = Query(..., ge=1), limit: int = Query(20, ge=1
 def chat_log(req: ChatLogRequest) -> dict[str, Any]:
     """持久化一条对话消息（用户输入、助手回复、provider 结果卡片等），按 track 区分创作/普通。"""
     return append_message(_clean_chat_message(req.model_dump()))
+
+
+@app.post("/api/chat/log/update")
+def chat_log_update(req: ChatLogUpdateRequest) -> dict[str, Any]:
+    """覆盖一条已有对话消息，用于 provider 卡片编辑态刷新恢复。"""
+    payload = req.model_dump()
+    seq = int(payload.pop("seq"))
+    return update_message(seq, payload.get("novel_id"), _clean_chat_message(payload))
 
 
 def _clean_chat_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -2351,12 +2423,16 @@ def _confirmed_provider_answers(req: ProviderConfirmRequest) -> list[dict[str, A
                 "\n\n".join(file_parts),
             ])).strip()
         if text:
+            original = (item.original_result or "").strip()
             confirmed.append({
                 "provider": item.provider,
                 "name": item.name or item.provider,
                 "status": item.status or "success",
                 "result": text,
                 "files": item.files,
+                "edited": bool(item.edited) or (bool(original) and original != text),
+                "original_chars": len(original),
+                "confirmed_chars": len(text),
             })
     return confirmed
 
@@ -2398,7 +2474,28 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
         bundle["novel_id"] = nid
         bundle["project_kind"] = bundle.get("project_kind") or kind
         bundle["model_preferences"] = req.model_preferences
-        workflow_sop = vals.get("workflow_sop") or bundle.get("workflow_sop") or sop_for_task(kind, req.task)
+        request_analysis = (
+            vals.get("request_analysis")
+            or bundle.get("request_analysis")
+            or (vals.get("data") or {}).get("request_analysis")
+            or {}
+        )
+        effective_task = req.task or vals.get("task") or bundle.get("task") or "prose"
+        if effective_task in {"", "generic", "draft"} and isinstance(request_analysis, dict):
+            effective_task = request_analysis.get("task") or request_analysis.get("canonical_task") or effective_task
+        effective_chapter = req.chapter or vals.get("chapter") or bundle.get("chapter")
+        if not effective_chapter and isinstance(request_analysis, dict):
+            effective_chapter = request_analysis.get("target_chapter") or request_analysis.get("chapter")
+        try:
+            effective_chapter = int(effective_chapter) if effective_chapter else None
+        except Exception:
+            effective_chapter = None
+        bundle["task"] = effective_task
+        if effective_chapter:
+            bundle["chapter"] = effective_chapter
+        if request_analysis and not bundle.get("request_analysis"):
+            bundle["request_analysis"] = request_analysis
+        workflow_sop = vals.get("workflow_sop") or bundle.get("workflow_sop") or sop_for_task(kind, effective_task)
         bundle["workflow_sop"] = workflow_sop
         actions = list(vals.get("actions") or [])
         actions.append("provider_confirm(user)")
@@ -2412,11 +2509,14 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
             status="running",
             details={
                 "answers": len(confirmed),
+                "edited_answers": sum(1 for item in confirmed if item.get("edited")),
+                "confirmed_chars": sum(len(item.get("result") or "") for item in confirmed),
                 "checkpoint_id": req.checkpoint_id,
                 "sop_stage": workflow_sop.get("stage"),
                 "role": workflow_sop.get("role_label"),
                 "mode": workflow_sop.get("mode"),
             },
+            artifacts={"confirmed_provider_answers": confirmed},
         )
 
         update = {
@@ -2424,8 +2524,8 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
             "bundle": bundle,
             "project_kind": kind,
             "workflow_sop": workflow_sop,
-            "task": req.task,
-            "chapter": req.chapter,
+            "task": effective_task,
+            "chapter": effective_chapter,
             "provider_answers": confirmed,
             "merge_info": {},
             "pre_review": {},
@@ -2473,20 +2573,21 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
                     status = str(payload.get("status") or "running")
                     label_map = {
                         "provider_consensus": "共识归纳",
-                        "provider_digest": "逐篇五维评分",
+                        "provider_digest": "逐篇多维评分",
                         "provider_merge": "融合生成",
                     }
+                    label = label_map.get(stage) or STAGE_LABELS.get(stage, stage)
                     details = {k: v for k, v in payload.items() if k not in {"type", "stage", "status"}}
                     append_event(
                         nid,
                         invocation_id,
                         "provider_stage",
-                        f"{label_map.get(stage, stage)}{'完成' if status == 'done' else '进行中'}",
+                        f"{label}{'完成' if status == 'done' else '进行中'}",
                         node=stage,
                         status=status,
                         details=details,
                     )
-                    _provider_confirm_progress(progress, stage, label_map.get(stage, stage), status, **details)
+                    _provider_confirm_progress(progress, stage, label, status, **details)
             elif mode == "updates":
                 for node in (payload or {}).keys():
                     append_event(
@@ -2522,9 +2623,14 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
                 "artifacts": {},
                 "project_kind": final.get("project_kind") or kind,
             }
-        data["policy"] = policy_view(req.track, req.task)
-        data["task"] = data.get("task") or req.task
-        data["chapter"] = data.get("chapter") or req.chapter
+        final_analysis = data.get("request_analysis") or final.get("request_analysis") or request_analysis or {}
+        data["request_analysis"] = final_analysis
+        data_task = data.get("task") or effective_task
+        if data_task in {"", "generic", "draft"} and isinstance(final_analysis, dict):
+            data_task = final_analysis.get("task") or final_analysis.get("canonical_task") or data_task
+        data["task"] = data_task
+        data["chapter"] = data.get("chapter") or effective_chapter
+        data["policy"] = policy_view(req.track, data["task"])
         data["project_kind"] = data.get("project_kind") or kind
         data["invocation_id"] = invocation_id
         data["invocation_log"] = invocation_rel_path(nid, invocation_id) if invocation_id else ""
@@ -2533,7 +2639,7 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
         try:
             from app.final_text_cleaner import clean_final_draft
 
-            draft = clean_final_draft(draft, task=req.task, project_kind=kind)
+            draft = clean_final_draft(draft, task=data["task"], project_kind=kind)
             data["draft"] = draft
         except Exception:
             pass
@@ -2543,12 +2649,19 @@ def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=Non
             status="awaiting_confirm" if draft else "failed",
             label="等待用户确认采纳" if draft else "用户确认材料后融合失败",
             details={
-                "task": req.task,
-                "chapter": req.chapter,
+                "task": data["task"],
+                "chapter": data.get("chapter"),
                 "actions": final.get("actions") or actions,
                 "draft_length": len(draft),
             },
-            artifacts={"invocation_log": data.get("invocation_log", "")},
+            artifacts={
+                "invocation_log": data.get("invocation_log", ""),
+                "draft": draft,
+                "draft_length": len(draft),
+                "task": data["task"],
+                "chapter": data.get("chapter"),
+                "project_kind": data.get("project_kind") or kind,
+            },
         )
         data["cleanup"] = _cleanup_after_success(nid, "provider_confirm")
         return {

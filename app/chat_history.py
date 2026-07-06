@@ -81,6 +81,33 @@ def append_message(message: dict[str, Any]) -> dict[str, Any]:
         return message
 
 
+def update_message(seq: int, novel_id: str | None, message: dict[str, Any]) -> dict[str, Any]:
+    """Replace one existing message in active/archive history for recoverable UI edits."""
+    nid = _norm_novel_id(novel_id or message.get("novel_id"))
+    with _lock:
+        for path in (RECENT_FILE, ARCHIVE_FILE):
+            items = _read_lines(path)
+            changed = False
+            for idx, item in enumerate(items):
+                if int(item.get("seq", 0)) != int(seq):
+                    continue
+                if _norm_novel_id(item.get("novel_id")) != nid:
+                    continue
+                replacement = {
+                    **message,
+                    "seq": int(seq),
+                    "track": _norm_track(message.get("track", item.get("track"))),
+                    "novel_id": nid,
+                }
+                items[idx] = replacement
+                changed = True
+                break
+            if changed:
+                _write_lines(path, items)
+                return {"ok": True, "updated": True, "message": items[idx]}
+    return {"ok": True, "updated": False, "reason": "not_found", "seq": int(seq), "novel_id": nid}
+
+
 def _norm_track(track: Any) -> str:
     """归一化 track；缺省或非法值视为 normal（旧记录无此字段时即普通轨道）。"""
     return "create" if track == "create" else "normal"

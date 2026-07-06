@@ -4,11 +4,16 @@ from datetime import datetime
 from typing import Any
 
 
+MATERIAL_ASSEMBLY_SUBSTAGES = [
+    "creative_state", "methodology_context", "creative_enhancements",
+    "material_profile", "context_broker",
+]
+
 STAGE_PRESETS: dict[str, list[str]] = {
     "draft": [
-        "request_analyze", "need_audit", "draft_assemble", "prompt_refine",
+        "request_analyze", "need_audit", "draft_assemble",
         "creative_state", "methodology_context", "creative_enhancements",
-        "material_profile", "context_broker", "provider_route", "generate", "pre_review",
+        "material_profile", "context_broker", "prompt_refine", "provider_route", "generate", "pre_review",
         "model_review", "draft_finalize", "user_confirm",
     ],
     "provider": [
@@ -57,7 +62,7 @@ STAGE_LABELS: dict[str, str] = {
     "provider_fanout": "网页模型",
     "provider_confirm_gate": "确认材料",
     "provider_consensus": "共识归纳",
-    "provider_digest": "五维评分",
+    "provider_digest": "多维评分",
     "provider_merge": "融合生成",
     "generate": "融合成稿",
     "pre_review": "规则预审",
@@ -122,7 +127,7 @@ def workflow_snapshot(
     source: str = "backend",
 ) -> dict[str, Any]:
     now = datetime.now().isoformat(timespec="seconds")
-    return {
+    return normalize_workflow_status({
         "stages": stages,
         "current": current,
         "done": done or [],
@@ -135,7 +140,78 @@ def workflow_snapshot(
         "task": task,
         "chapter": chapter,
         "track": track,
-    }
+    })
+
+
+def normalize_workflow_status(status: dict[str, Any]) -> dict[str, Any]:
+    """Normalize recoverable workflow snapshots across old and current UI contracts.
+
+    The material enhancement cards are sub-stages inside the LangGraph
+    `draft_assemble` node. Older snapshots only marked the parent node done, so
+    restoring them left the sub-stage chips gray even though their data had
+    already been assembled. Treat a completed parent as completion of those
+    sub-stages for display/recovery purposes.
+    """
+    if not isinstance(status, dict):
+        return {}
+    out = dict(status)
+    stages = [str(item or "").strip() for item in out.get("stages") or [] if str(item or "").strip()]
+    if "provider_confirm_gate" in stages and "request_analyze" not in stages:
+        stages = draft_stages(use_provider_source=True, selected_provider=True)
+    stages = _normalize_stage_order(stages)
+    done = [str(item or "").strip() for item in out.get("done") or [] if str(item or "").strip()]
+    current = str(out.get("current") or "").strip()
+    if out.get("status") == "awaiting_confirm" and (current == "user_confirm" or "draft_finalize" in done):
+        current = "user_confirm"
+        done = [node for node in done if node != "user_confirm"]
+        durations = out.get("durations_ms")
+        if isinstance(durations, dict):
+            durations.pop("user_confirm", None)
+        out.pop("total_ms", None)
+    if "provider_confirm_gate" in stages and "request_analyze" in stages and any(
+        node in done or out.get("current") == node for node in {"provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"}
+    ):
+        gate_index = stages.index("provider_confirm_gate")
+        for node in stages[:gate_index]:
+            if node not in done:
+                done.append(node)
+    if "draft_assemble" in done:
+        for node in MATERIAL_ASSEMBLY_SUBSTAGES:
+            if node in stages and node not in done:
+                done.append(node)
+    if any(node in done for node in {"provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"}):
+        for node in ("provider_consensus", "provider_digest", "provider_merge"):
+            if node in stages and node not in done:
+                done.append(node)
+    if current and current in done:
+        try:
+            idx = stages.index(current)
+            next_node = next((node for node in stages[idx + 1:] if node not in done), "")
+            if next_node:
+                current = next_node
+        except ValueError:
+            pass
+    if not current:
+        current = next((node for node in stages if node not in done), "")
+    if current:
+        out["current"] = current
+    if current in {"provider_confirm_gate", "user_confirm", "overwrite_confirm"} and current not in done:
+        out["status"] = "awaiting_confirm"
+    out["stages"] = stages
+    out["done"] = [node for node in done if node in stages]
+    return out
+
+
+def _normalize_stage_order(stages: list[str]) -> list[str]:
+    if "draft_assemble" not in stages:
+        return stages
+    canonical = draft_stages(
+        use_provider_source="provider_fanout" in stages,
+        selected_provider="provider_fanout" in stages,
+        followup=False,
+    )
+    order = {node: idx for idx, node in enumerate(canonical)}
+    return sorted(stages, key=lambda node: (order.get(node, len(order) + stages.index(node)), stages.index(node)))
 
 
 def save_pending_workflow_snapshot(

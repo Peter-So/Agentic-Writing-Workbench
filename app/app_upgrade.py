@@ -34,6 +34,21 @@ def current_version() -> str:
     return "unknown"
 
 
+def _version_tuple(value: str) -> tuple[int, int, int] | None:
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", value or "")
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _has_newer_release(current: str, latest: str) -> bool:
+    current_tuple = _version_tuple(current)
+    latest_tuple = _version_tuple(latest)
+    if current_tuple and latest_tuple:
+        return latest_tuple > current_tuple
+    return bool(latest and latest != current)
+
+
 def check_latest_release() -> dict[str, Any]:
     latest = _latest_release()
     current = current_version()
@@ -43,7 +58,7 @@ def check_latest_release() -> dict[str, Any]:
         "ok": True,
         "current_version": current,
         "latest_version": latest_tag,
-        "has_update": bool(latest_tag and latest_tag != current),
+        "has_update": _has_newer_release(current, latest_tag),
         "safe_to_upgrade": task_report["safe_to_upgrade"],
         "active_tasks": task_report,
         "release": {

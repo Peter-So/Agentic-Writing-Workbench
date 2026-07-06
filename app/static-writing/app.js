@@ -105,14 +105,13 @@ let modelRegistry = { models: [], image_models: [], roles: {} };
 let workflowRegistry = { presets: {}, labels: {} };
 
 const FALLBACK_STAGE_PRESETS = {
-  draft: ["request_analyze", "need_audit", "draft_assemble", "prompt_refine", "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
+  draft: ["request_analyze", "need_audit", "draft_assemble", "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker", "prompt_refine", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   provider: ["provider_fanout", "provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge"],
   followup: ["request_analyze", "need_audit", "context_followup", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   provider_confirm: ["provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   intervention: ["submit", "memory_lookup", "llm_analysis", "knowledge_settle", "memory_write", "policy_update", "impact_analyze", "primary_write", "primary_artifact", "related_write", "related_pending", "invocation_finalize", "pending_clear", "cleanup", "complete"],
   reference_import: ["reference_import_validate", "reference_import_save", "reference_import_analyze", "reference_import_five_dim", "reference_import_index", "reference_import_refresh"],
   archive: ["archive_submit", "archive_write", "overwrite_confirm", "overwrite", "archive_refresh", "complete"],
-  app_upgrade: ["upgrade_check", "upgrade_download", "upgrade_backup", "upgrade_apply", "upgrade_rollback", "upgrade_restart"],
 };
 const VISUAL_PROMPT_STAGES = [
   "visual_prompt_start", "visual_prompt_beat", "visual_prompt_scene", "visual_prompt_characters",
@@ -123,6 +122,9 @@ const IMAGE_GENERATION_STAGES = [
   "image_generate_start", "image_generate_scene", "image_generate_characters",
   "image_generate_start_frame", "image_generate_middle_frame", "image_generate_end_frame",
   "image_generate_key_frame", "image_generate_done",
+];
+const MATERIAL_ASSEMBLY_SUBSTAGES = [
+  "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker",
 ];
 const FALLBACK_NODE_LABELS = {
   request_analyze: "请求理解",
@@ -139,7 +141,7 @@ const FALLBACK_NODE_LABELS = {
   provider_fanout: "网页模型",
   provider_confirm_gate: "确认材料",
   provider_consensus: "共识归纳",
-  provider_digest: "五维评分",
+  provider_digest: "多维评分",
   provider_merge: "融合生成",
   generate: "融合成稿",
   pre_review: "规则预审",
@@ -199,7 +201,7 @@ const UI_OPERATION_LABELS = {
   provider_confirm: "确认材料",
   provider_resume: "恢复生成",
   provider_consensus: "共识归纳",
-  provider_digest: "逐篇五维评分",
+  provider_digest: "逐篇多维评分",
   provider_merge: "融合生成",
   reference_import_validate: "校验上传",
   reference_import_save: "保存原文",
@@ -226,17 +228,17 @@ const UI_OPERATION_LABELS = {
   overwrite_confirm: "等待覆盖确认",
   overwrite: "覆盖写回",
   archive_refresh: "刷新项目状态",
+  doctor_request: "发起诊断",
+  doctor_check: "执行检查",
+  doctor_render: "渲染诊断",
+  trajectory_load: "加载轨迹",
+  packet_generate: "生成复盘包",
   upgrade_check: "检查版本",
   upgrade_download: "下载新版",
   upgrade_backup: "创建备份",
   upgrade_apply: "更新框架",
   upgrade_rollback: "失败回滚",
   upgrade_restart: "重启服务",
-  doctor_request: "发起诊断",
-  doctor_check: "执行检查",
-  doctor_render: "渲染诊断",
-  trajectory_load: "加载轨迹",
-  packet_generate: "生成复盘包",
   operation_done: "完成",
 };
 const STRUCTURE_ROLE_LABELS = {
@@ -711,8 +713,53 @@ function createTypewriter(target, options = {}) {
 }
 
 function formatElapsed(ms) {
+  if (ms > 0 && ms < 1000) return "<1s";
   const seconds = Math.max(0, Math.round((ms || 0) / 1000));
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return minutes ? `${hours}h${String(minutes).padStart(2, "0")}m` : `${hours}h`;
+  }
+  if (seconds >= 60) {
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return rest ? `${minutes}m${String(rest).padStart(2, "0")}s` : `${minutes}m`;
+  }
   return `${seconds}s`;
+}
+
+let activeStageTimer = null;
+let activeStageOwnerSeq = 0;
+
+function stopStageTimer(timer) {
+  if (!timer) return;
+  if (timer.interval) window.clearInterval(timer.interval);
+  timer.interval = null;
+}
+
+function claimStageTimer(timer) {
+  if (!timer) return;
+  if (activeStageTimer && activeStageTimer !== timer) {
+    stopStageTimer(activeStageTimer);
+  }
+  activeStageOwnerSeq += 1;
+  timer.ownerSeq = activeStageOwnerSeq;
+  activeStageTimer = timer;
+}
+
+function releaseStageTimer(timer) {
+  stopStageTimer(timer);
+  if (!timer || activeStageTimer === timer) activeStageTimer = null;
+}
+
+function canRenderStageTimer(timer) {
+  return !timer?.ownerSeq || activeStageTimer === timer;
+}
+
+function clearStageBar() {
+  releaseStageTimer(activeStageTimer);
+  stageBar.textContent = "";
+  delete stageBar.dataset.stageSignature;
 }
 
 function epochFromPerf(perfValue) {
@@ -731,8 +778,15 @@ function createStageTimer(stages, onTick) {
     totalMs: null,
     interval: null,
   };
+  claimStageTimer(timer);
   if (timer.current) timer.stageStartedAt.set(timer.current, now);
-  timer.interval = window.setInterval(() => onTick?.(), 1000);
+  timer.interval = window.setInterval(() => {
+    if (!canRenderStageTimer(timer)) {
+      stopStageTimer(timer);
+      return;
+    }
+    onTick?.();
+  }, 1000);
   return timer;
 }
 
@@ -752,13 +806,15 @@ function finishStageTimer(timer) {
   if (!timer) return;
   if (timer.totalMs !== null) return;
   timer.totalMs = performance.now() - timer.startedAt;
-  if (timer.interval) window.clearInterval(timer.interval);
-  timer.interval = null;
+  stopStageTimer(timer);
 }
 
 function stageElapsed(timer, node, isRunning) {
   if (!timer || !node) return "";
-  if (timer.durations.has(node)) return formatElapsed(timer.durations.get(node));
+  if (timer.durations.has(node)) {
+    const ms = Number(timer.durations.get(node)) || 0;
+    return ms < 1000 ? "<1s" : formatElapsed(ms);
+  }
   if (isRunning && timer.stageStartedAt.has(node)) {
     return formatElapsed(performance.now() - timer.stageStartedAt.get(node));
   }
@@ -770,12 +826,16 @@ function workflowSnapshotFromFlow(flow, meta = {}) {
   const timer = flow.timer;
   const durations = {};
   for (const [node, ms] of timer.durations.entries()) {
+    if (meta.status === "awaiting_confirm" && timer.current === "user_confirm" && node === "user_confirm") continue;
     durations[node] = Math.max(0, Math.round(ms));
   }
-  return {
+  const done = Array.from(flow.doneNodes || []).filter((node) => (
+    !(meta.status === "awaiting_confirm" && timer.current === "user_confirm" && node === "user_confirm")
+  ));
+  return normalizeWorkflowSnapshot({
     stages: flow.stages || [],
     current: timer.current || "",
-    done: Array.from(flow.doneNodes || []),
+    done,
     durations_ms: durations,
     stage_started_at: epochFromPerf(timer.stageStartedAt.get(timer.current)),
     total_ms: timer.totalMs === null ? null : Math.max(0, Math.round(timer.totalMs)),
@@ -786,7 +846,7 @@ function workflowSnapshotFromFlow(flow, meta = {}) {
     task: meta.task || flowTask(),
     chapter: meta.chapter || null,
     track: meta.track || "create",
-  };
+  });
 }
 
 function workflowSnapshotFromTimer(stages, doneNodes, timer, meta = {}) {
@@ -820,39 +880,124 @@ function schedulePendingWorkflowPersist(snapshot, immediate = false) {
 }
 
 function createRestoredFlow(stages) {
-  if (restoredWorkflowFlow?.timer?.interval) {
-    window.clearInterval(restoredWorkflowFlow.timer.interval);
-  }
+  disposeRestoredWorkflowFlow();
   restoredWorkflowFlow = createOperationFlow(stages);
   return restoredWorkflowFlow;
 }
 
+function disposeRestoredWorkflowFlow(exceptFlow = null) {
+  if (!restoredWorkflowFlow || restoredWorkflowFlow === exceptFlow) return;
+  releaseStageTimer(restoredWorkflowFlow.timer);
+  restoredWorkflowFlow = null;
+}
+
 function restoreFlowFromWorkflowStatus(status = {}) {
-  const stages = Array.isArray(status.stages) && status.stages.length ? status.stages : workflowStages("draft");
-  const current = status.current || stages[0];
+  const normalized = normalizeWorkflowSnapshot(status);
+  const stages = Array.isArray(normalized.stages) && normalized.stages.length ? normalized.stages : workflowStages("draft");
+  const current = normalized.current || stages[0];
   const flow = createRestoredFlow(stages);
-  const done = new Set(Array.isArray(status.done) ? status.done : []);
+  const done = new Set(Array.isArray(normalized.done) ? normalized.done : []);
   flow.doneNodes.clear();
   for (const node of done) {
     if (stages.includes(node)) flow.doneNodes.add(node);
   }
   flow.timer.durations.clear();
-  const durations = status.durations_ms || {};
+  const durations = normalized.durations_ms || {};
   for (const [node, ms] of Object.entries(durations)) {
     if (stages.includes(node)) flow.timer.durations.set(node, Number(ms) || 0);
   }
   flow.timer.current = current;
-  const started = Date.parse(status.stage_started_at || "");
+  const started = Date.parse(normalized.stage_started_at || "");
   if (Number.isFinite(started)) {
     flow.timer.stageStartedAt.set(current, performance.now() - Math.max(0, Date.now() - started));
   } else {
     markStageStarted(flow.timer, current);
   }
-  if (status.total_ms !== null && status.total_ms !== undefined) {
-    flow.timer.totalMs = Number(status.total_ms) || null;
+  if (normalized.total_ms !== null && normalized.total_ms !== undefined) {
+    flow.timer.totalMs = Number(normalized.total_ms) || null;
   }
   renderStages(current, flow.doneNodes, stages, flow.timer);
   return flow;
+}
+
+function normalizeWorkflowSnapshot(status = {}) {
+  const out = { ...(status || {}) };
+  let stages = Array.isArray(out.stages) ? out.stages.filter(Boolean) : [];
+  if (stages.includes("provider_confirm_gate") && !stages.includes("request_analyze")) {
+    stages = stagesForProviderConfirmRestore();
+  }
+  stages = normalizeWorkflowStageOrder(stages);
+  const done = new Set(Array.isArray(out.done) ? out.done.filter(Boolean) : []);
+  if (out.status === "awaiting_confirm" && (out.current === "user_confirm" || done.has("draft_finalize"))) {
+    out.current = "user_confirm";
+    done.delete("user_confirm");
+    if (out.durations_ms && typeof out.durations_ms === "object") delete out.durations_ms.user_confirm;
+    if (out.total_ms !== null && out.total_ms !== undefined) delete out.total_ms;
+  }
+  if (stages.includes("provider_confirm_gate") && stages.includes("request_analyze")) {
+    const activeConfirmNodes = [
+      "provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge",
+      "generate", "pre_review", "model_review", "draft_finalize", "user_confirm",
+    ];
+    if (activeConfirmNodes.some((node) => done.has(node) || out.current === node)) {
+      for (const node of stages.slice(0, stages.indexOf("provider_confirm_gate"))) {
+        done.add(node);
+      }
+    }
+  }
+  if (done.has("draft_assemble")) {
+    for (const node of MATERIAL_ASSEMBLY_SUBSTAGES) {
+      if (stages.includes(node)) done.add(node);
+    }
+  }
+  if (["provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"].some((node) => done.has(node))) {
+    for (const node of ["provider_consensus", "provider_digest", "provider_merge"]) {
+      if (stages.includes(node)) done.add(node);
+    }
+  }
+  if (out.current && done.has(out.current)) {
+    const idx = stages.indexOf(out.current);
+    const next = stages.slice(Math.max(0, idx + 1)).find((node) => !done.has(node));
+    if (next) out.current = next;
+  }
+  if (!out.current) {
+    out.current = stages.find((node) => !done.has(node)) || "";
+  }
+  if (["provider_confirm_gate", "user_confirm", "overwrite_confirm"].includes(out.current) && !done.has(out.current)) {
+    out.status = "awaiting_confirm";
+  }
+  out.stages = stages;
+  out.done = Array.from(done).filter((node) => stages.includes(node));
+  return out;
+}
+
+function stagesForProviderConfirmRestore() {
+  const base = workflowStages("draft");
+  const routeIndex = base.indexOf("provider_route");
+  if (routeIndex < 0) return workflowStages("provider_confirm");
+  return [
+    ...base.slice(0, routeIndex + 1),
+    ...workflowStages("provider"),
+    ...base.slice(routeIndex + 1),
+  ];
+}
+
+function normalizeWorkflowStageOrder(stages = []) {
+  if (!stages.includes("draft_assemble")) return stages;
+  const base = workflowStages("draft");
+  const canonical = stages.includes("provider_fanout")
+    ? [
+        ...base.slice(0, base.indexOf("provider_route") + 1),
+        ...workflowStages("provider"),
+        ...base.slice(base.indexOf("provider_route") + 1),
+      ]
+    : base;
+  const order = new Map(canonical.map((node, idx) => [node, idx]));
+  return [...stages].sort((left, right) => {
+    const leftOrder = order.has(left) ? order.get(left) : canonical.length + stages.indexOf(left);
+    const rightOrder = order.has(right) ? order.get(right) : canonical.length + stages.indexOf(right);
+    return leftOrder - rightOrder || stages.indexOf(left) - stages.indexOf(right);
+  });
 }
 
 function promptText(value = messageInput?.value) {
@@ -871,6 +1016,7 @@ function updateComposerButtons() {
 
 function setBusy(busy, label = "运行中") {
   composerBusy = Boolean(busy);
+  if (messageInput) messageInput.disabled = composerBusy;
   updateComposerButtons();
   doctorBtn.disabled = busy;
   if (upgradeBtn) upgradeBtn.disabled = busy;
@@ -888,13 +1034,29 @@ function setBusy(busy, label = "运行中") {
 
 async function persistMessage(payload) {
   try {
-    await fetch("/api/chat/log", {
+    const res = await fetch("/api/chat/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ track: "create", novel_id: currentProject, ...payload }),
     });
+    return await readJsonResponse(res);
   } catch {
     // History persistence should never block the live UI.
+    return null;
+  }
+}
+
+async function updatePersistedMessage(seq, payload) {
+  if (!seq) return null;
+  try {
+    const res = await fetch("/api/chat/log/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track: "create", novel_id: currentProject, seq, ...payload }),
+    });
+    return await readJsonResponse(res);
+  } catch {
+    return null;
   }
 }
 
@@ -1027,8 +1189,7 @@ function providerDisplayName(provider) {
 
 function clearMessages() {
   messagesEl.innerHTML = "";
-  stageBar.innerHTML = "";
-  delete stageBar.dataset.stageSignature;
+  clearStageBar();
   invocationCard.textContent = "尚未运行";
   historyLoadedFor = "";
   pendingWorkflowRecovery = null;
@@ -1620,7 +1781,7 @@ function renderWikiIndex(llmData, projectData) {
 
 async function openWikiFile(path) {
   path = normalizeWritingPath(path);
-  const flow = createOperationFlow(["file_open", "file_read", "file_render"]);
+  const flow = createOperationFlow(["file_open", "file_read", "file_render"], { silent: true });
   try {
     flow.step("file_read");
     const [fileRes, llmRes, projectRes] = await Promise.all([
@@ -1667,7 +1828,7 @@ async function openFile(path) {
     await openWikiFile(path);
     return;
   }
-  const flow = createOperationFlow(["file_open", "file_read", "file_render"]);
+  const flow = createOperationFlow(["file_open", "file_read", "file_render"], { silent: true });
   try {
     flow.step("file_read");
     const res = await fetch(`/api/writing/file?path=${encodeURIComponent(path)}`);
@@ -1849,12 +2010,57 @@ function workflowRecoveryPhase(status = {}) {
     return "archive";
   }
   if (state === "awaiting_confirm" && current === "provider_confirm_gate") return "provider_confirm";
-  if (state === "awaiting_confirm" && (current === "user_confirm" || stages.includes("user_confirm"))) return "user_confirm";
+  if (state === "awaiting_confirm" && current === "user_confirm") return "user_confirm";
   return "";
+}
+
+function workflowDoneSet(status = {}) {
+  return new Set(Array.isArray(status.done) ? status.done.filter(Boolean) : []);
+}
+
+function workflowHasReachedStage(status = {}, stage = "") {
+  if (!stage) return false;
+  const normalized = normalizeWorkflowSnapshot(status);
+  const stages = Array.isArray(normalized.stages) ? normalized.stages : [];
+  const done = workflowDoneSet(normalized);
+  if (done.has(stage)) return true;
+  const targetIndex = stages.indexOf(stage);
+  const currentIndex = stages.indexOf(normalized.current || "");
+  return targetIndex >= 0 && currentIndex > targetIndex;
+}
+
+function workflowPastProviderGate(status = {}) {
+  const done = workflowDoneSet(status);
+  if (done.has("provider_confirm_gate")) return true;
+  return [
+    "provider_consensus", "provider_digest", "provider_merge",
+    "generate", "pre_review", "model_review", "draft_finalize", "user_confirm",
+  ].some((stage) => workflowHasReachedStage(status, stage));
+}
+
+function workflowNeedsProviderConfirm(status = {}) {
+  return workflowRecoveryPhase(status) === "provider_confirm" && !workflowPastProviderGate(status);
+}
+
+function workflowCanRecoverDraft(status = {}) {
+  if (workflowRecoveryPhase(status) === "user_confirm") return true;
+  return workflowHasReachedStage(status, "draft_finalize");
+}
+
+function providerHistoryDoneText(invocationId = "", restore = {}) {
+  const status = pendingWorkflowRecovery?.status || {};
+  const workflowInvocationId = restore.workflowInvocationId || status.invocation_id || "";
+  if (!invocationId || invocationId !== workflowInvocationId) return "材料已确认，融合稿已生成。";
+  const hasDraft = Boolean(restore.draftInvocations?.has(invocationId));
+  if (hasDraft) return "材料已确认，融合稿已生成。";
+  if (workflowCanRecoverDraft(status)) return "材料已确认，已进入定稿；正文内容等待恢复或返回。";
+  if (workflowPastProviderGate(status)) return "材料已确认，正在继续融合。";
+  return "材料已确认。";
 }
 
 function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
   const completedProviderInvocations = new Set();
+  const draftInvocations = new Set();
   const providerAnswersByInvocation = new Map();
   const draftByInvocation = new Map();
   const draftBySeq = new Map();
@@ -1868,6 +2074,7 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
       const seq = messageSeq(msg);
       draftBySeq.set(seq, msg);
       if (!invocationId) continue;
+      draftInvocations.add(invocationId);
       draftByInvocation.set(invocationId, msg);
       completedProviderInvocations.add(invocationId);
       const answers = providerAnswersFromDraftData(msg.data || {});
@@ -1892,6 +2099,8 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
   const workflowStatus = workflowRecovery?.status || {};
   const workflowInvocationId = workflowStatus.invocation_id || workflowRecovery?.pending?.invocation_id || "";
   const workflowPhase = workflowRecoveryPhase(workflowStatus);
+  const workflowProviderGateDone = Boolean(workflowInvocationId && workflowPastProviderGate(workflowStatus));
+  if (workflowProviderGateDone) completedProviderInvocations.add(workflowInvocationId);
   for (const [invocationId, pending] of archivePendingByInvocation.entries()) {
     const draft = draftByInvocation.get(invocationId);
     if (draft) {
@@ -1927,7 +2136,7 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
   if (workflowPhase === "user_confirm" && workflowInvocationId) {
     const draft = draftByInvocation.get(workflowInvocationId);
     if (draft) pendingDraftSeq = messageSeq(draft);
-  } else if (workflowPhase === "provider_confirm" && workflowInvocationId) {
+  } else if (workflowNeedsProviderConfirm(workflowStatus) && workflowInvocationId) {
     const provider = providerByInvocation.get(workflowInvocationId);
     if (provider) pendingProviderSeq = messageSeq(provider);
   } else if (!workflowPhase) {
@@ -1952,6 +2161,7 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
 
   return {
     completedProviderInvocations,
+    draftInvocations,
     providerAnswersByInvocation,
     pendingDraftSeq,
     pendingProviderSeq,
@@ -2119,7 +2329,10 @@ function invocationStageTimings(record = {}, stages = []) {
 
 async function enrichHistoryRestoreTimings(restore, messages = []) {
   const ids = Array.from(new Set(
-    messages.map(messageInvocationId).filter(Boolean),
+    [
+      ...messages.map(messageInvocationId).filter(Boolean),
+      restore.workflowInvocationId || "",
+    ].filter(Boolean),
   ));
   await Promise.all(ids.map(async (invocationId) => {
     try {
@@ -2158,11 +2371,14 @@ function renderStoredMessage(msg, restore = {}) {
     return;
   }
   if (msg.kind === "provider" && msg.data) {
+    const invocationId = messageInvocationId(msg);
     renderStoredProviderMessage(msg.data, {
       seq: messageSeq(msg),
-      completed: restore.completedProviderInvocations?.has(messageInvocationId(msg)),
+      completed: restore.completedProviderInvocations?.has(invocationId),
       pending: restore.pendingProviderSeq === messageSeq(msg),
-      restoredAnswers: restore.providerAnswersByInvocation?.get(messageInvocationId(msg)) || [],
+      restoredAnswers: restore.providerAnswersByInvocation?.get(invocationId) || [],
+      completedText: providerHistoryDoneText(invocationId, restore),
+      flow: restore.workflowPhase === "provider_confirm" ? restoredWorkflowFlow : null,
     });
     return;
   }
@@ -2206,6 +2422,9 @@ function renderStoredMessage(msg, restore = {}) {
 function renderStoredProviderMessage(data, options = {}) {
   const wrap = document.createElement("article");
   wrap.className = "message assistant";
+  wrap._providerSeq = Number(options.seq || 0);
+  wrap._providerData = data || {};
+  wrap._providerContext = data?.context || {};
   const title = document.createElement("div");
   title.className = "message-title";
   title.textContent = data.message || "网页模型协同结果";
@@ -2233,13 +2452,74 @@ function renderStoredProviderMessage(data, options = {}) {
   if (completed) {
     const done = document.createElement("div");
     done.className = "muted-line provider-history-done";
-    done.textContent = "材料已确认，融合稿已生成。";
+    done.textContent = options.completedText || "材料已确认，融合稿已生成。";
     wrap.appendChild(done);
   }
   messagesEl.appendChild(wrap);
   if (!completed && options.pending && data.awaiting_provider_confirm && data.context) {
-    attachProviderGate(wrap, data.context);
+    attachProviderGate(wrap, data.context, options.flow || {});
   }
+}
+
+function providerResultsForPersistence(gridMsg) {
+  return Object.values(gridMsg?._cards || {})
+    .map((card) => {
+      const result = syncProviderCardResult(card);
+      if (!result?.provider) return null;
+      const status = result.status || (result.result ? "success" : "partial");
+      return {
+        provider: result.provider,
+        name: result.name,
+        status,
+        result: result.result || "",
+        files: result.files || [],
+        edited: Boolean(result.edited),
+        original_result: result.original_result || "",
+      };
+    })
+    .filter(Boolean);
+}
+
+function providerMessagePayload(gridMsg) {
+  const base = gridMsg?._providerData || {};
+  return {
+    role: "assistant",
+    kind: "provider",
+    meta: base.meta || "网页模型协同",
+    track: base.track || gridMsg?._providerContext?.track || "create",
+    data: {
+      ...base,
+      ok: base.ok !== false,
+      awaiting_provider_confirm: base.awaiting_provider_confirm !== false,
+      message: base.message || "网页模型协同结果",
+      results: providerResultsForPersistence(gridMsg),
+      context: gridMsg?._providerContext || base.context || {},
+    },
+  };
+}
+
+function scheduleProviderMessageUpdate(gridMsg) {
+  if (!gridMsg?._providerSeq) return;
+  if (gridMsg._providerPersistTimer) window.clearTimeout(gridMsg._providerPersistTimer);
+  gridMsg._providerPersistTimer = window.setTimeout(async () => {
+    gridMsg._providerPersistTimer = null;
+    await flushProviderMessageUpdate(gridMsg);
+  }, 500);
+}
+
+async function flushProviderMessageUpdate(gridMsg) {
+  if (!gridMsg?._providerSeq) return null;
+  if (gridMsg._providerPersistTimer) {
+    window.clearTimeout(gridMsg._providerPersistTimer);
+    gridMsg._providerPersistTimer = null;
+  }
+  const payload = providerMessagePayload(gridMsg);
+  const result = await updatePersistedMessage(gridMsg._providerSeq, payload);
+  if (result?.updated && result.message) {
+    gridMsg._providerData = result.message.data || payload.data;
+    gridMsg._providerContext = gridMsg._providerData.context || gridMsg._providerContext || {};
+  }
+  return result;
 }
 
 function renderProviderCard(result = {}, options = {}) {
@@ -2249,9 +2529,20 @@ function renderProviderCard(result = {}, options = {}) {
   const hasText = Boolean(String(result.result || "").trim());
   const status = result.status || (hasText ? "success" : "partial");
   const name = result.name || result.provider || "网页模型";
-  card.innerHTML = `<header><strong></strong><span class="status-chip"></span></header>`;
-  card.querySelector("strong").textContent = name;
-  const chip = card.querySelector(".status-chip");
+  const header = document.createElement("header");
+  const strong = document.createElement("strong");
+  strong.textContent = name;
+  const actions = document.createElement("span");
+  actions.className = "provider-actions";
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "复制";
+  copyBtn.title = "复制当前卡片内容";
+  actions.appendChild(copyBtn);
+  const chip = document.createElement("span");
+  chip.className = "status-chip";
+  header.append(strong, actions, chip);
+  card.appendChild(header);
   updateProviderStatusChip(chip, status);
   card._providerResult = {
     provider: result.provider || "",
@@ -2259,24 +2550,55 @@ function renderProviderCard(result = {}, options = {}) {
     status,
     result: result.result || "",
     files: result.files || [],
+    original_result: result.original_result || result.result || "",
+    edited: Boolean(result.edited),
   };
-  if (options.editable && (!hasText || result.manual_entry)) {
+  if (options.editable) {
     const input = document.createElement("textarea");
     input.className = "provider-manual-input";
-    input.placeholder = `粘贴${name}的完整回答`;
+    input.placeholder = `${name}回答，可复制或编辑后确认`;
     input.value = result.result || "";
     input.addEventListener("input", () => {
-      card._providerResult.result = input.value.trim();
+      syncProviderCardResult(card);
       card._providerResult.status = card._providerResult.result ? "success" : "partial";
+      card._providerResult.edited = card._providerResult.result !== String(card._providerResult.original_result || "").trim();
       updateProviderStatusChip(chip, card._providerResult.status);
+      scheduleProviderMessageUpdate(card.closest(".message"));
     });
+    input.addEventListener("change", () => { flushProviderMessageUpdate(card.closest(".message")); });
+    input.addEventListener("blur", () => { flushProviderMessageUpdate(card.closest(".message")); });
     card.appendChild(input);
   } else {
     const pre = document.createElement("pre");
     pre.textContent = result.result || (options.completed ? "材料已确认并完成融合，原始回答未保存在历史卡片。" : "等待手动粘贴 provider 回答。");
     card.appendChild(pre);
   }
+  copyBtn.addEventListener("click", async () => {
+    syncProviderCardResult(card);
+    const text = card._providerResult?.result || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = "已复制";
+      setTimeout(() => { copyBtn.textContent = "复制"; }, 1200);
+    } catch {
+      const input = card.querySelector(".provider-manual-input");
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+  });
   return card;
+}
+
+function syncProviderCardResult(card) {
+  if (!card?._providerResult) return null;
+  const input = card.querySelector(".provider-manual-input");
+  const pre = card.querySelector("pre");
+  const text = input ? input.value : pre ? pre.textContent : card._providerResult.result;
+  card._providerResult.result = String(text || "").trim();
+  return card._providerResult;
 }
 
 function updateProviderStatusChip(chip, status) {
@@ -2292,14 +2614,52 @@ async function loadChatHistory() {
     const data = await readJsonResponse(res);
     assertApiOk(res, data, "历史对话加载失败");
     const messages = data.messages || [];
-    const restore = buildHistoryRestoreState(messages, pendingWorkflowRecovery);
+    let restore = buildHistoryRestoreState(messages, pendingWorkflowRecovery);
     await enrichHistoryRestoreTimings(restore, messages);
+    const recoveredDraft = await recoverMissingDraftResultFromInvocation(messages, restore);
+    if (recoveredDraft) {
+      messages.push(recoveredDraft);
+      restore = buildHistoryRestoreState(messages, pendingWorkflowRecovery);
+      await enrichHistoryRestoreTimings(restore, messages);
+    }
     for (const msg of messages) renderStoredMessage(msg, restore);
+    renderPendingWorkflowRecoveryPrompt(restore);
     historyLoadedFor = currentProject;
     messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch {
     addMessage("system", "历史对话加载失败", "History", { persist: false });
   }
+}
+
+async function recoverMissingDraftResultFromInvocation(messages = [], restore = {}) {
+  const status = pendingWorkflowRecovery?.status || {};
+  const invocationId = status.invocation_id || pendingWorkflowRecovery?.pending?.invocation_id || "";
+  if (!invocationId || !workflowCanRecoverDraft(status)) return null;
+  if (messages.some((msg) => msg.kind === "draft_result" && messageInvocationId(msg) === invocationId)) return null;
+  const record = restore.timingByInvocation?.get(invocationId);
+  const draft = cleanFinalDraftText(record?.artifacts?.draft || "");
+  if (!draft) return null;
+  const payload = {
+    role: "assistant",
+    kind: "draft_result",
+    text: draft,
+    meta: "融合稿",
+    track: status.track || "create",
+    data: draftResultMeta({
+      original: draft,
+      archive_content: "",
+      chapter: record?.artifacts?.chapter || status.chapter || pendingWorkflowRecovery?.pending?.chapter || null,
+      task: record?.artifacts?.task || status.task || pendingWorkflowRecovery?.pending?.task || flowTask(),
+      track: status.track || "create",
+      novel_id: currentProject,
+      project_kind: record?.artifacts?.project_kind || pendingWorkflowRecovery?.pending?.project_kind || currentKind,
+      invocation_id: invocationId,
+      request_analysis: pendingWorkflowRecovery?.pending?.analysis || {},
+      artifacts: record?.artifacts || {},
+    }),
+  };
+  const saved = await persistMessage(payload);
+  return saved?.seq ? saved : { ...payload, seq: Date.now(), novel_id: currentProject };
 }
 
 async function loadPendingWorkflowStatus() {
@@ -2323,7 +2683,121 @@ async function loadPendingWorkflowStatus() {
   }
 }
 
+function renderPendingWorkflowRecoveryPrompt(restore = {}) {
+  const recovery = pendingWorkflowRecovery;
+  const status = recovery?.status || {};
+  const pending = recovery?.pending || {};
+  const invocationId = status.invocation_id || pending.invocation_id || "";
+  if (!invocationId || status.status !== "running") return;
+  const phase = workflowRecoveryPhase(status);
+  if (restore.pendingDraftSeq || restore.pendingProviderSeq || (phase && !(phase === "user_confirm" && workflowCanRecoverDraft(status)))) return;
+  if (document.querySelector(`[data-recovery-invocation="${CSS.escape(invocationId)}"]`)) return;
+
+  const current = status.current || "";
+  const label = stageLabel(current) || current || "未完成流程";
+  const message = pending.message || "";
+  const text = workflowPastProviderGate(status)
+    ? `检测到上次任务已越过「确认材料」并停在「${label}」，但未找到可恢复的定稿正文。可以继续当前任务或终止后重新发起。`
+    : `检测到上次任务停在「${label}」。如果是页面中断或刷新导致，可使用保存的任务描述继续。`;
+  const ref = addMessage(
+    "system",
+    text,
+    "任务恢复",
+    { persist: false },
+  );
+  ref.item.dataset.recoveryInvocation = invocationId;
+  const row = document.createElement("div");
+  row.className = "confirm-row recovery-row";
+  const resumeBtn = document.createElement("button");
+  resumeBtn.type = "button";
+  resumeBtn.className = "button primary";
+  resumeBtn.textContent = "继续当前任务";
+  const terminateBtn = document.createElement("button");
+  terminateBtn.type = "button";
+  terminateBtn.className = "button danger";
+  terminateBtn.textContent = "终止任务";
+  const note = document.createElement("span");
+  note.className = "muted-line";
+  note.textContent = invocationId;
+  row.append(resumeBtn, terminateBtn, note);
+  ref.item.appendChild(row);
+
+  resumeBtn.addEventListener("click", async () => {
+    const text = String(message || "").trim();
+    if (!text) {
+      note.textContent = "没有保存到可继续的任务描述，请重新提交。";
+      return;
+    }
+    if (!requireModels(["chat", "writing", "review"], {
+      label: "已选择模型，继续当前任务",
+      retry: () => resumeBtn.click(),
+    })) return;
+    resumeBtn.disabled = true;
+    terminateBtn.disabled = true;
+    note.textContent = "继续执行中...";
+    const analysis = pending.analysis || {};
+    const payload = {
+      message: text,
+      mode: analysis.intent || "draft",
+      chapter: pending.chapter || analysis.target_chapter || null,
+      task: pending.task || analysis.task || status.task || "generic",
+      track: pending.track || status.track || "create",
+      novel_id: pending.novel_id || currentProject,
+      login_confirmed: aiToggle.checked ? loginConfirmed() : {},
+      use_provider_source: aiToggle.checked,
+      model_preferences: modelPreferences(),
+    };
+    try {
+      addMessage("user", text, "继续任务", { persist: true });
+      await runDraftStream(payload);
+      note.textContent = "已继续执行";
+      row.classList.add("done");
+      pendingWorkflowRecovery = null;
+    } catch (error) {
+      resumeBtn.disabled = false;
+      terminateBtn.disabled = false;
+      note.textContent = `继续失败：${error}`;
+    } finally {
+      setBusy(false);
+      await loadStatus();
+      await loadCostBoard();
+      await loadMission();
+      await loadObservability();
+    }
+  });
+  terminateBtn.addEventListener("click", async () => {
+    resumeBtn.disabled = true;
+    terminateBtn.disabled = true;
+    note.textContent = "终止任务中...";
+    try {
+      const res = await fetch("/api/writing/pending-status/terminate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          novel_id: pending.novel_id || currentProject,
+          track: pending.track || status.track || "create",
+          invocation_id: invocationId,
+        }),
+      });
+      const data = await readJsonResponse(res);
+      assertApiOk(res, data, "终止任务失败");
+      pendingWorkflowRecovery = null;
+      activeWorkflowStatus = null;
+      clearStageBar();
+      ref.body.textContent = "当前 pending 任务已终止，相关短期记忆缓存已清理。";
+      row.remove();
+      setBusy(false);
+      await loadObservability();
+    } catch (error) {
+      resumeBtn.disabled = false;
+      terminateBtn.disabled = false;
+      note.textContent = `终止失败：${error}`;
+    }
+  });
+}
+
 function renderStages(current, done = new Set(), stages = null, timer = null) {
+  if (!canRenderStageTimer(timer)) return;
   const visibleStages = Array.isArray(stages) && stages.length ? stages : workflowStages("draft");
   const hasTotal = Boolean(timer && timer.totalMs !== null);
   const signature = [...visibleStages, ...(hasTotal ? ["__total__"] : [])].join("|");
@@ -2364,7 +2838,20 @@ function stageLabel(node) {
   return workflowRegistry.labels?.[node] || FALLBACK_NODE_LABELS[node] || UI_OPERATION_LABELS[node] || node;
 }
 
-function createOperationFlow(stages) {
+function createOperationFlow(stages, options = {}) {
+  if (options.silent) {
+    const steps = Array.isArray(stages) && stages.length ? stages : ["operation_done"];
+    return {
+      stages: steps,
+      doneNodes: new Set(),
+      timer: null,
+      silent: true,
+      step() {},
+      done() {},
+      fail() {},
+    };
+  }
+  disposeRestoredWorkflowFlow();
   const steps = Array.isArray(stages) && stages.length ? stages : ["operation_done"];
   const doneNodes = new Set();
   const timer = createStageTimer(steps, () => renderStages(timer.current, doneNodes, steps, timer));
@@ -2404,13 +2891,34 @@ function applyFlowProgress(flow, event = {}) {
   const doneNodes = flow.doneNodes || new Set();
   const stage = event.stage;
   if (!stages.includes(stage)) return;
+  const step = (node) => {
+    if (typeof flow.step === "function") {
+      flow.step(node);
+      return;
+    }
+    const target = node || stages[0];
+    if (flow.timer.current && flow.timer.current !== target) {
+      markStageDone(flow.timer, flow.timer.current);
+      doneNodes.add(flow.timer.current);
+    }
+    markStageStarted(flow.timer, target);
+    renderStages(target, doneNodes, stages, flow.timer);
+  };
+  const fail = () => {
+    if (typeof flow.fail === "function") {
+      flow.fail();
+      return;
+    }
+    finishStageTimer(flow.timer);
+    renderStages(flow.timer.current, doneNodes, stages, flow.timer);
+  };
   if (event.status === "done") {
     if (flow.timer.current !== stage) {
-      flow.step(stage);
+      step(stage);
     }
     markStageDone(flow.timer, stage);
     doneNodes.add(stage);
-    const next = nextStageAfter(stage, stages);
+    const next = nextPendingStageAfter(stage, stages, doneNodes);
     if (next && next !== stage && !doneNodes.has(next)) {
       markStageStarted(flow.timer, next);
     }
@@ -2418,11 +2926,11 @@ function applyFlowProgress(flow, event = {}) {
     return;
   }
   if (event.status === "error") {
-    if (flow.timer.current !== stage) flow.step(stage);
-    flow.fail();
+    if (flow.timer.current !== stage) step(stage);
+    fail();
     return;
   }
-  flow.step(stage);
+  step(stage);
 }
 
 async function refreshWorkspacePanels(flow = null) {
@@ -2454,6 +2962,15 @@ function stagesForPayload(payload) {
 function nextStageAfter(node, stages) {
   const idx = stages.indexOf(node);
   return idx >= 0 && idx + 1 < stages.length ? stages[idx + 1] : node;
+}
+
+function nextPendingStageAfter(node, stages, done = new Set()) {
+  const idx = stages.indexOf(node);
+  if (idx < 0) return node;
+  for (const candidate of stages.slice(idx + 1)) {
+    if (!done.has(candidate)) return candidate;
+  }
+  return node;
 }
 
 function renderTasks() {
@@ -3432,202 +3949,6 @@ async function deleteCurrentProject() {
   }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function checkAppUpgrade() {
-  setBusy(true, "检查更新");
-  const flow = createOperationFlow(workflowStages("app_upgrade"));
-  try {
-    flow.step("upgrade_check");
-    const res = await fetch("/api/app-upgrade/check", { cache: "no-store" });
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "检查更新失败");
-    flow.doneNodes.add("upgrade_check");
-    renderUpgradeCard(data);
-    flow.done();
-  } catch (error) {
-    flow.fail();
-    addMessage("system", `检查更新失败：${error}`, "版本更新");
-  } finally {
-    setBusy(false);
-  }
-}
-
-function renderUpgradeCard(data = {}) {
-  const release = data.release || {};
-  const activeTasks = data.active_tasks || {};
-  const blockers = Array.isArray(activeTasks.blockers) ? activeTasks.blockers : [];
-  const item = document.createElement("article");
-  item.className = "message assistant";
-
-  const title = document.createElement("div");
-  title.className = "message-title";
-  title.textContent = data.has_update ? "发现新版本" : "当前已是最新版本";
-  item.appendChild(title);
-
-  const body = document.createElement("div");
-  body.className = "upgrade-card";
-  body.innerHTML = `
-    <div class="upgrade-version-row">
-      <span>当前：${escapeHtml(data.current_version || "未知")}</span>
-      <span>最新：${escapeHtml(data.latest_version || "未知")}</span>
-    </div>
-    <div class="upgrade-release-title">${escapeHtml(release.name || data.latest_version || "Release")}</div>
-    <pre class="upgrade-notes">${escapeHtml(release.body || "暂无发布说明。")}</pre>
-    <div class="upgrade-safety muted-line">升级前会自动备份；不会覆盖 .env、projects、data、logs、tmp、backups 等用户资产。</div>
-    ${blockers.length ? `<div class="upgrade-blockers">
-      <strong>暂不能升级：存在 ${blockers.length} 个未完成任务</strong>
-      ${blockers.slice(0, 5).map((blocker) => `<div>${escapeHtml(upgradeBlockerText(blocker))}</div>`).join("")}
-    </div>` : ""}
-  `;
-
-  if (data.has_update) {
-    const actions = document.createElement("div");
-    actions.className = "upgrade-actions";
-    const confirmBtn = document.createElement("button");
-    confirmBtn.className = "button danger";
-    confirmBtn.type = "button";
-    confirmBtn.textContent = "确认升级";
-    confirmBtn.disabled = blockers.length > 0 || data.safe_to_upgrade === false;
-    confirmBtn.title = confirmBtn.disabled ? "请先完成、归档或取消未完成任务后再升级。" : "备份框架文件并升级到最新版本。";
-    confirmBtn.addEventListener("click", () => startAppUpgrade(data.latest_version || ""));
-    actions.appendChild(confirmBtn);
-    if (release.html_url) {
-      const link = document.createElement("a");
-      link.className = "button ghost";
-      link.href = release.html_url;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = "查看 Release";
-      actions.appendChild(link);
-    }
-    body.appendChild(actions);
-  }
-
-  item.appendChild(body);
-  messagesEl.appendChild(item);
-  scrollMessagesToBottom();
-}
-
-function upgradeBlockerText(item = {}) {
-  const labels = {
-    provider_job: "网页模型任务",
-    invocation: "创作任务",
-    pending_intent: "待恢复任务",
-    workflow_status: "流程状态",
-    reference_extract_job: "参考小说抽取",
-  };
-  const typeLabel = labels[item.type] || item.type || "任务";
-  const project = item.novel_id ? `项目 ${item.novel_id}` : "";
-  const id = item.id ? `ID ${item.id}` : "";
-  const status = item.status ? `状态 ${item.status}` : "";
-  const task = item.task ? `类型 ${item.task}` : "";
-  return [typeLabel, project, id, status, task].filter(Boolean).join("｜");
-}
-
-async function startAppUpgrade(version = "") {
-  const confirmed = window.confirm("确认升级到最新版本？升级会先备份框架文件，完成后自动重启服务。");
-  if (!confirmed) return;
-  setBusy(true, "升级中");
-  const flow = createOperationFlow(workflowStages("app_upgrade"));
-  flow.step("upgrade_download");
-  try {
-    const payload = {
-      version,
-      host: location.hostname || "127.0.0.1",
-      port: Number(location.port || 7861),
-    };
-    const res = await fetch("/api/app-upgrade/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "启动升级失败");
-    addMessage("system", "升级任务已启动，页面会在服务重启后自动刷新。", "版本更新");
-    await pollAppUpgrade(flow);
-  } catch (error) {
-    flow.fail();
-    addMessage("system", `升级失败：${error}`, "版本更新");
-    setBusy(false);
-  }
-}
-
-async function pollAppUpgrade(flow) {
-  let restartExpected = false;
-  const deadline = Date.now() + 8 * 60 * 1000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
-      const data = await readJsonResponse(res);
-      assertApiOk(res, data, "读取升级状态失败");
-      updateUpgradeFlow(flow, data);
-      if (data.status === "failed") {
-        flow.fail();
-        setBusy(false);
-        addMessage("system", data.message || "升级失败。", "版本更新");
-        return;
-      }
-      if (data.status === "completed" || data.status === "restarting") {
-        restartExpected = true;
-      }
-      if (restartExpected && data.restart?.scheduled) {
-        await waitForServiceRestore();
-        return;
-      }
-    } catch (error) {
-      if (restartExpected) {
-        await waitForServiceRestore();
-        return;
-      }
-    }
-    await delay(1800);
-  }
-  flow.fail();
-  setBusy(false);
-  addMessage("system", "升级等待超时，请手动刷新页面或检查服务。", "版本更新");
-}
-
-function updateUpgradeFlow(flow, data = {}) {
-  const stageMap = {
-    queued: "upgrade_check",
-    download: "upgrade_download",
-    backup: "upgrade_backup",
-    apply: "upgrade_apply",
-    rollback: "upgrade_rollback",
-    restart: "upgrade_restart",
-  };
-  const node = stageMap[data.stage] || "upgrade_apply";
-  flow.step(node);
-  const message = data.message || data.stage || "升级中";
-  if (data.backup_dir) {
-    setProjectActionStatus(`升级状态：${message}；备份：${data.backup_dir}`);
-  } else {
-    setProjectActionStatus(`升级状态：${message}`);
-  }
-}
-
-async function waitForServiceRestore() {
-  setProjectActionStatus("服务正在重启，等待恢复...");
-  const deadline = Date.now() + 90 * 1000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
-      if (res.ok) {
-        window.location.reload();
-        return;
-      }
-    } catch {
-      // Keep waiting while the old process exits and the restart helper starts the new one.
-    }
-    await delay(1800);
-  }
-  setBusy(false);
-  setProjectActionStatus("服务重启等待超时，请手动刷新页面。", "warn");
-}
-
 async function loadProviders() {
   const res = await fetch("/api/ai-providers/status");
   const data = await readJsonResponse(res);
@@ -3997,10 +4318,12 @@ function buildProviderGrid(order) {
   wrap._grid = grid;
   wrap._cards = {};
   for (const pid of order) {
-    const card = document.createElement("section");
-    card.className = "provider-card";
-    card.dataset.provider = pid;
-    card.innerHTML = `<header><strong>${providerName(pid)}</strong><span class="status-chip running">运行中</span></header><pre>等待结果…</pre>`;
+    const card = renderProviderCard({
+      provider: pid,
+      name: providerName(pid),
+      status: "running",
+      result: "",
+    }, { editable: true });
     grid.appendChild(card);
     wrap._cards[pid] = card;
   }
@@ -4017,14 +4340,20 @@ function updateProviderGrid(gridMsg, data) {
   const card = gridMsg?._cards?.[data.provider];
   if (!card) return;
   const status = card.querySelector(".status-chip");
+  const input = card.querySelector(".provider-manual-input");
   const pre = card.querySelector("pre");
   updateProviderStatusChip(status, data.status || "success");
+  const userEditing = input && document.activeElement === input;
+  if (input && !userEditing) input.value = data.result || "";
   if (pre) pre.textContent = data.result || "无正文";
+  const currentText = userEditing ? input.value : data.result || "";
   card._providerResult = {
     provider: data.provider,
     name: data.name || providerName(data.provider),
     status: data.status || "success",
-    result: data.result || "",
+    result: currentText,
+    original_result: data.result || "",
+    edited: userEditing && String(currentText || "").trim() !== String(data.result || "").trim(),
     files: [],
   };
   scrollMessagesToBottom();
@@ -4033,21 +4362,30 @@ function updateProviderGrid(gridMsg, data) {
 function confirmedAnswers(gridMsg) {
   return Object.values(gridMsg?._cards || {})
     .map((card) => {
-      const input = card.querySelector(".provider-manual-input");
-      if (input && card._providerResult) {
-        card._providerResult.result = input.value.trim();
-        card._providerResult.status = card._providerResult.result ? "success" : "partial";
+      const result = syncProviderCardResult(card);
+      if (result) {
+        result.status = result.result ? "success" : "partial";
+        result.edited = result.result !== String(result.original_result || "").trim();
       }
-      return card._providerResult;
+      return result;
     })
-    .filter((item) => item && item.result && item.status !== "failed");
+    .filter((item) => item && item.result && item.status !== "failed")
+    .map((item) => ({
+      provider: item.provider,
+      name: item.name,
+      status: item.status,
+      result: item.result,
+      files: item.files || [],
+      edited: Boolean(item.edited),
+      original_result: "",
+    }));
 }
 
 async function persistProviderMaterials(gridMsg, ctx = {}) {
   const answers = confirmedAnswers(gridMsg);
   if (!answers.length || gridMsg?._providerPersisted) return;
   gridMsg._providerPersisted = true;
-  await persistMessage({
+  const payload = {
     role: "assistant",
     kind: "provider",
     meta: "网页模型协同",
@@ -4070,7 +4408,13 @@ async function persistProviderMaterials(gridMsg, ctx = {}) {
         model_preferences: ctx.model_preferences || modelPreferences(),
       },
     },
-  });
+  };
+  const saved = await persistMessage(payload);
+  if (saved?.seq) {
+    gridMsg._providerSeq = Number(saved.seq || 0);
+    gridMsg._providerData = saved.data || payload.data;
+    gridMsg._providerContext = gridMsg._providerData.context || payload.data.context || {};
+  }
 }
 
 function attachProviderGate(gridMsg, ctx, flow = {}) {
@@ -4089,6 +4433,7 @@ function attachProviderGate(gridMsg, ctx, flow = {}) {
   gridMsg.appendChild(row);
   gridMsg._gate = row;
   async function confirmProviderMaterials() {
+    await flushProviderMessageUpdate(gridMsg);
     const answers = confirmedAnswers(gridMsg);
     if (!answers.length) {
       note.textContent = "没有可确认的 provider 回答。";
@@ -4216,6 +4561,7 @@ function attachProviderGate(gridMsg, ctx, flow = {}) {
       scrollMessagesToBottom();
     }
     finishProviderTextStages(activeFlow);
+    startUserConfirmStage(activeFlow);
     schedulePendingWorkflowPersist(workflowSnapshotFromFlow(activeFlow, {
       invocation_id: data.data?.invocation_id || ctx.invocation_id || "",
       task: data.data?.task || ctx.task,
@@ -4246,7 +4592,6 @@ function attachProviderGate(gridMsg, ctx, flow = {}) {
       original: fusedText,
     }, activeFlow);
     invocationCard.textContent = data.data?.invocation_log || ctx.invocation_id || "已完成";
-    startUserConfirmStage(activeFlow);
     scrollMessagesToBottom();
   }
   btn.addEventListener("click", confirmProviderMaterials);
@@ -4398,13 +4743,16 @@ function startUserConfirmStage(flow) {
   if (!flow?.timer) return;
   markStageDone(flow.timer, "draft_finalize");
   flow.doneNodes?.add("draft_finalize");
+  flow.doneNodes?.delete("user_confirm");
+  flow.timer.durations?.delete("user_confirm");
+  flow.timer.totalMs = null;
   markStageStarted(flow.timer, "user_confirm");
   renderStages("user_confirm", flow.doneNodes || new Set(), flow.stages || workflowStages("draft"), flow.timer);
 }
 
 function finishProviderTextStages(flow) {
   if (!flow?.timer) return;
-  for (const stage of ["provider_merge", "generate"]) {
+  for (const stage of ["provider_digest", "provider_merge", "generate"]) {
     if ((flow.stages || []).includes(stage)) {
       markStageDone(flow.timer, stage);
       flow.doneNodes?.add(stage);
@@ -4923,6 +5271,7 @@ function attachArchiveControls(msgEl, ctx) {
 
 async function runDraftStream(payload) {
   setBusy(true, "生成中");
+  disposeRestoredWorkflowFlow();
   payload = refreshModelPayload(payload);
   const stages = stagesForPayload(payload);
   const doneNodes = new Set();
@@ -4973,7 +5322,18 @@ async function runDraftStream(payload) {
           source: "draft_stream",
         }), true);
       } else if (ev.event === "provider") {
-        if (ev.data.type === "provider_init") providerGrid = buildProviderGrid(ev.data.order || []);
+        if (ev.data.type === "provider_init") {
+          applyFlowProgress({ timer, doneNodes, stages }, { stage: "provider_fanout", status: "running" });
+          schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
+            invocation_id: invocationId,
+            task: payload.task,
+            chapter: payload.chapter,
+            track: payload.track,
+            status: "running",
+            source: "draft_stream_provider",
+          }), true);
+          providerGrid = buildProviderGrid(ev.data.order || []);
+        }
         if (ev.data.type === "provider") updateProviderGrid(providerGrid, ev.data);
       } else if (ev.event === "stage") {
         applyFlowProgress({ timer, doneNodes, stages }, ev.data || {});
@@ -4988,11 +5348,18 @@ async function runDraftStream(payload) {
       } else if (ev.event === "node") {
         const node = ev.data.node;
         rememberFlowTask(ev.data.request_analysis);
-        markStageDone(timer, node);
-        doneNodes.add(node);
-        const next = nextStageAfter(node, stages);
-        markStageStarted(timer, next);
-        renderStages(next, doneNodes, stages, timer);
+        if (node === "provider_confirm_gate") {
+          doneNodes.delete("provider_confirm_gate");
+          timer.durations.delete("provider_confirm_gate");
+          markStageStarted(timer, "provider_confirm_gate");
+          renderStages("provider_confirm_gate", doneNodes, stages, timer);
+        } else {
+          markStageDone(timer, node);
+          doneNodes.add(node);
+          const next = nextPendingStageAfter(node, stages, doneNodes);
+          markStageStarted(timer, next);
+          renderStages(next, doneNodes, stages, timer);
+        }
         schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
           invocation_id: invocationId,
           task: payload.task,
@@ -5134,6 +5501,202 @@ async function runDraftStream(payload) {
   scrollMessagesToBottom();
 }
 
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function checkAppUpgrade() {
+  setBusy(true, "检查更新");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  try {
+    flow.step("upgrade_check");
+    const res = await fetch("/api/app-upgrade/check", { cache: "no-store" });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "检查更新失败");
+    flow.doneNodes.add("upgrade_check");
+    renderUpgradeCard(data);
+    flow.done();
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `检查更新失败：${error}`, "版本更新");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderUpgradeCard(data = {}) {
+  const release = data.release || {};
+  const activeTasks = data.active_tasks || {};
+  const blockers = Array.isArray(activeTasks.blockers) ? activeTasks.blockers : [];
+  const item = document.createElement("article");
+  item.className = "message assistant";
+
+  const title = document.createElement("div");
+  title.className = "message-title";
+  title.textContent = data.has_update ? "发现新版本" : "当前已是最新版本";
+  item.appendChild(title);
+
+  const body = document.createElement("div");
+  body.className = "upgrade-card";
+  body.innerHTML = `
+    <div class="upgrade-version-row">
+      <span>当前：${escapeHtml(data.current_version || "未知")}</span>
+      <span>最新：${escapeHtml(data.latest_version || "未知")}</span>
+    </div>
+    <div class="upgrade-release-title">${escapeHtml(release.name || data.latest_version || "Release")}</div>
+    <pre class="upgrade-notes">${escapeHtml(release.body || "暂无发布说明。")}</pre>
+    <div class="upgrade-safety muted-line">升级前会自动备份；不会覆盖 .env、projects、data、logs、tmp、backups 等用户资产。</div>
+    ${blockers.length ? `<div class="upgrade-blockers">
+      <strong>暂不能升级：存在 ${blockers.length} 个未完成任务</strong>
+      ${blockers.slice(0, 5).map((blocker) => `<div>${escapeHtml(upgradeBlockerText(blocker))}</div>`).join("")}
+    </div>` : ""}
+  `;
+
+  if (data.has_update) {
+    const actions = document.createElement("div");
+    actions.className = "upgrade-actions";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "button danger";
+    confirmBtn.type = "button";
+    confirmBtn.textContent = "确认升级";
+    confirmBtn.disabled = blockers.length > 0 || data.safe_to_upgrade === false;
+    confirmBtn.title = confirmBtn.disabled ? "请先完成、归档或取消未完成任务后再升级。" : "备份框架文件并升级到最新版本。";
+    confirmBtn.addEventListener("click", () => startAppUpgrade(data.latest_version || ""));
+    actions.appendChild(confirmBtn);
+    if (release.html_url) {
+      const link = document.createElement("a");
+      link.className = "button ghost";
+      link.href = release.html_url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = "查看 Release";
+      actions.appendChild(link);
+    }
+    body.appendChild(actions);
+  }
+
+  item.appendChild(body);
+  messagesEl.appendChild(item);
+  scrollMessagesToBottom();
+}
+
+function upgradeBlockerText(item = {}) {
+  const labels = {
+    provider_job: "网页模型任务",
+    invocation: "创作任务",
+    pending_intent: "待恢复任务",
+    workflow_status: "流程状态",
+    reference_extract_job: "参考小说抽取",
+  };
+  const typeLabel = labels[item.type] || item.type || "任务";
+  const project = item.novel_id ? `项目 ${item.novel_id}` : "";
+  const id = item.id ? `ID ${item.id}` : "";
+  const status = item.status ? `状态 ${item.status}` : "";
+  const task = item.task ? `类型 ${item.task}` : "";
+  return [typeLabel, project, id, status, task].filter(Boolean).join("｜");
+}
+
+async function startAppUpgrade(version = "") {
+  const confirmed = window.confirm("确认升级到最新版本？升级会先备份框架文件，完成后自动重启服务。");
+  if (!confirmed) return;
+  setBusy(true, "升级中");
+  const flow = createOperationFlow(workflowStages("app_upgrade"));
+  flow.step("upgrade_download");
+  try {
+    const payload = {
+      version,
+      host: location.hostname || "127.0.0.1",
+      port: Number(location.port || 7861),
+    };
+    const res = await fetch("/api/app-upgrade/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(res);
+    assertApiOk(res, data, "启动升级失败");
+    addMessage("system", "升级任务已启动，页面会在服务重启后自动刷新。", "版本更新");
+    await pollAppUpgrade(flow);
+  } catch (error) {
+    flow.fail();
+    addMessage("system", `升级失败：${error}`, "版本更新");
+    setBusy(false);
+  }
+}
+
+async function pollAppUpgrade(flow) {
+  let restartExpected = false;
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      const data = await readJsonResponse(res);
+      assertApiOk(res, data, "读取升级状态失败");
+      updateUpgradeFlow(flow, data);
+      if (data.status === "failed") {
+        flow.fail();
+        setBusy(false);
+        addMessage("system", data.message || "升级失败。", "版本更新");
+        return;
+      }
+      if (data.status === "completed" || data.status === "restarting") {
+        restartExpected = true;
+      }
+      if (restartExpected && data.restart?.scheduled) {
+        await waitForServiceRestore();
+        return;
+      }
+    } catch (error) {
+      if (restartExpected) {
+        await waitForServiceRestore();
+        return;
+      }
+    }
+    await delay(1800);
+  }
+  flow.fail();
+  setBusy(false);
+  addMessage("system", "升级等待超时，请手动刷新页面或检查服务。", "版本更新");
+}
+
+function updateUpgradeFlow(flow, data = {}) {
+  const stageMap = {
+    queued: "upgrade_check",
+    download: "upgrade_download",
+    backup: "upgrade_backup",
+    apply: "upgrade_apply",
+    rollback: "upgrade_rollback",
+    restart: "upgrade_restart",
+  };
+  const node = stageMap[data.stage] || "upgrade_apply";
+  flow.step(node);
+  const message = data.message || data.stage || "升级中";
+  if (data.backup_dir) {
+    setProjectActionStatus(`升级状态：${message}；备份：${data.backup_dir}`);
+  } else {
+    setProjectActionStatus(`升级状态：${message}`);
+  }
+}
+
+async function waitForServiceRestore() {
+  setProjectActionStatus("服务正在重启，等待恢复...");
+  const deadline = Date.now() + 90 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/app-upgrade/status?ts=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Keep waiting while the old process exits and the restart helper starts the new one.
+    }
+    await delay(1800);
+  }
+  setBusy(false);
+  setProjectActionStatus("服务重启等待超时，请手动刷新页面。", "warn");
+}
 async function runDoctor() {
   setBusy(true, "诊断中");
   const flow = createOperationFlow(["doctor_request", "doctor_check", "doctor_render"]);
@@ -5447,7 +6010,7 @@ document.addEventListener("click", async (event) => {
   if (openBtn) {
     const provider = openBtn.dataset.openProvider;
     setBusy(true, `打开 ${providerDisplayName(provider)}`);
-    const flow = createOperationFlow(["provider_open", "provider_refresh"]);
+    const flow = createOperationFlow(["provider_open", "provider_refresh"], { silent: true });
     try {
       flow.step("provider_open");
       const res = await fetch(`/api/ai-providers/${provider}/open`, { method: "POST" });
@@ -5474,7 +6037,7 @@ document.addEventListener("click", async (event) => {
   if (pinBtn) {
     const provider = pinBtn.dataset.pinProvider;
     setBusy(true, `固定 ${providerDisplayName(provider)} 会话`);
-    const flow = createOperationFlow(["provider_pin", "provider_refresh"]);
+    const flow = createOperationFlow(["provider_pin", "provider_refresh"], { silent: true });
     try {
       flow.step("provider_pin");
       const res = await fetch(`/api/ai-providers/${provider}/pin`, { method: "POST" });
@@ -5499,7 +6062,7 @@ document.addEventListener("click", async (event) => {
   if (resetBtn) {
     const provider = resetBtn.dataset.resetProvider;
     setBusy(true, `重置 ${providerDisplayName(provider)} 会话`);
-    const flow = createOperationFlow(["provider_reset", "provider_refresh"]);
+    const flow = createOperationFlow(["provider_reset", "provider_refresh"], { silent: true });
     try {
       flow.step("provider_reset");
       const res = await fetch(`/api/ai-providers/${provider}/reset-conversation`, { method: "POST" });
@@ -5522,7 +6085,7 @@ document.addEventListener("click", async (event) => {
 
   const trajectoryBtn = event.target.closest("[data-load-trajectory]");
   if (trajectoryBtn) {
-    const flow = createOperationFlow(["trajectory_load"]);
+    const flow = createOperationFlow(["trajectory_load"], { silent: true });
     switchStatusTab("trajectory");
     try {
       await loadTrajectory(trajectoryBtn.dataset.loadTrajectory);
@@ -5536,7 +6099,7 @@ document.addEventListener("click", async (event) => {
 
   const packetBtn = event.target.closest("[data-review-packet]");
   if (packetBtn) {
-    const flow = createOperationFlow(["packet_generate"]);
+    const flow = createOperationFlow(["packet_generate"], { silent: true });
     switchStatusTab("review");
     try {
       await loadReviewPacket(packetBtn.dataset.reviewPacket);

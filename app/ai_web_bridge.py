@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import logging
 import re
@@ -14,7 +15,7 @@ from app.config import ROOT
 from app.ai_providers import PROVIDERS
 
 
-PROFILE_ROOT = ROOT / "data" / "browser-profiles"
+PROFILE_ROOT = ROOT / "data" / "browser_profiles"
 # 每个 provider 固定会话 URL 的持久化文件，保证每次提问都续用同一段对话记录。
 SESSION_STORE = PROFILE_ROOT / "conversation_urls.json"
 RUN_TIMEOUT_MS = 120_000
@@ -97,6 +98,7 @@ class AIWebBridge:
         self._playwright = None
         self._sessions: dict[str, ProviderSession] = {}
         self._playwright_lock = asyncio.Lock()
+        self._clipboard_lock = asyncio.Lock()
         self._provider_locks: dict[str, asyncio.Lock] = {}
         self._conversation_urls: dict[str, str] = self._load_conversation_urls()
 
@@ -258,6 +260,7 @@ class AIWebBridge:
             session = await self._session(provider_id)
             page = session.page
             await self._ensure_provider_page(page, provider_id, provider["url"])
+            await self._wait_for_pre_prompt_snapshot(page, provider_id)
             before = await self._conversation_snapshot(page, provider_id)
             before_copy_count = await self._copy_button_count(page)
             input_result = await self._fill_prompt(page, prompt, provider_id)
@@ -292,52 +295,54 @@ class AIWebBridge:
             resolved = await self._current_conversation_url(page, provider_id)
             if resolved:
                 self._save_conversation_url(provider_id, resolved)
-            # 完成判定（统一）：等待本轮新增回答稳定，优先以新增复制按钮作为结束信号。
-            result = await self._wait_until_copy_ready(page, provider_id, before, prompt, before_copy_count)
+            # 完成判定（统一）：只等待本轮新增回答稳定；这里看到的 DOM 文本只能做诊断，
+            # 最终 provider 结果必须来自页面自己的复制按钮。
+            observed_text = await self._wait_until_copy_ready(page, provider_id, before, prompt, before_copy_count)
             # 等待回复结束后会话 id 可能才出现，再尝试记录一次。
             resolved = await self._current_conversation_url(page, provider_id)
             if resolved:
                 self._save_conversation_url(provider_id, resolved)
-            # 千问优先「复制为 Markdown」拿带标题的完整 markdown（与手动复制一致）。
+            # 千问也必须走“本轮提问坐标之后的复制按钮”边界；
+            # 不再按全页最后一个 Markdown 菜单入口复制，避免绕过坐标条件。
             copied = ""
-            if provider_id == "qwen":
-                try:
-                    copied = await asyncio.wait_for(
-                        self._capture_qwen_markdown(page, prompt), timeout=10.0)
-                except Exception as exc:
-                    _capture_debug(provider_id, "copy_markdown", f"timeout/err: {type(exc).__name__}")
             # 普通复制按钮抓取（含 markdown，最权威）：优先点击本轮新增回答的复制按钮。
-            # 这些站点的剪贴板拦截偶尔返回空，空则保留上面的抓取结果。
+            # 这些站点的剪贴板拦截偶尔返回空；空或疑似提问回显时，不能退回 DOM 文本。
             if not copied:
                 try:
-                    copied = await asyncio.wait_for(
-                        self._capture_via_copy_button(page, provider_id, before, prompt, before_copy_count),
-                        timeout=14.0,
-                    )
+                    async with self._clipboard_lock:
+                        copied = await self._capture_via_copy_button(page, provider_id, before, prompt, before_copy_count)
                 except Exception as exc:
-                    _capture_debug(provider_id, "copy_button", f"capture_timeout/err: {type(exc).__name__}")
-            if copied and len(self._normalize_text(copied)) >= 20:
+                    _capture_debug(provider_id, "copy_button", f"capture_err: {type(exc).__name__}")
+            if copied and self._is_valid_provider_copy(copied, prompt):
                 _capture_debug(provider_id, "copy_button", f"len={len(self._normalize_text(copied))} used=1")
-                result = copied
+                result = self._clean_provider_result(provider_id, copied)
+                status = "success" if result else "partial"
             else:
+                observed_len = len(self._normalize_text(observed_text))
+                copied_len = len(self._normalize_text(copied or ""))
                 _capture_debug(
                     provider_id, "copy_button",
-                    f"copied_len={len(self._normalize_text(copied or ''))} scraped_len={len(self._normalize_text(result))} used=0",
+                    f"copied_len={copied_len} observed_len={observed_len} used=0 copy_required=1",
                 )
-            result = self._clean_provider_result(provider_id, result)
+                result = "回答已完成或已开始生成，但未能通过页面复制按钮抓取到有效回答。请手动点击该 provider 回答的复制按钮后再更新结果。"
+                status = "partial"
             return {
                 "provider": provider_id,
                 "name": provider["name"],
-                "status": "success" if result else "partial",
-                "result": result or "已发送，但未在超时时间内抓取到新增回复文本。",
+                "status": status,
+                "result": result,
                 "url": page.url,
+                "capture_source": "provider_copy_button" if status == "success" else "copy_required",
+                "observed_length": len(self._normalize_text(observed_text)),
             }
 
     # document-start 安装：在任何站点 JS 之前 patch 剪贴板写入，把内容存到 window.__capturedCopy。
     # 这样 provider 点"复制"调 writeText/execCommand 时必被捕获（运行时再 patch 会被 SPA 缓存的旧引用绕过）。
     _CLIPBOARD_INIT_SCRIPT = r"""
         (() => {
-          window.__capturedCopy = "";
+          if (window.__awClipboardHookInstalled) return;
+          window.__awClipboardHookInstalled = true;
+          window.__capturedCopy = window.__capturedCopy || "";
           try {
             const cb = navigator.clipboard;
             if (cb && cb.writeText) {
@@ -375,13 +380,668 @@ class AIWebBridge:
                 continue
             if v and v.strip():
                 return v.replace("\r\n", "\n").strip()
+        system_text = self._read_system_clipboard_text()
+        if system_text:
+            return system_text
         return ""
 
-    async def _reset_captured_copy(self, page: Page) -> None:
+    def _read_system_clipboard_text(self) -> str:
+        """Read Windows system clipboard after provider UI copy succeeds.
+
+        Some provider pages use browser-native copy paths that update the OS
+        clipboard but do not flow through our injected page hook or
+        navigator.clipboard.readText(). This fallback is still validated against
+        the current answer before being accepted by callers.
+        """
+        if not hasattr(ctypes, "windll"):
+            return ""
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        CF_UNICODETEXT = 13
+        user32.GetClipboardData.restype = ctypes.c_void_p
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        if not user32.OpenClipboard(None):
+            return ""
         try:
-            await page.evaluate("() => { window.__capturedCopy = ''; }")
+            handle = user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return ""
+            locked = kernel32.GlobalLock(handle)
+            if not locked:
+                return ""
+            try:
+                return ctypes.wstring_at(locked).replace("\r\n", "\n").strip()
+            finally:
+                kernel32.GlobalUnlock(handle)
         except Exception:
-            pass
+            return ""
+        finally:
+            user32.CloseClipboard()
+
+    async def _install_runtime_clipboard_hook(self, page: Page) -> None:
+        """在当前已打开 SPA 页面补装剪贴板钩子。
+
+        document-start 钩子负责新页面；这里覆盖热重启后仍停留在旧页面、或 iframe
+        后加载的场景，避免 provider 页面复制成功但本端没有捕获到。
+        """
+        for root in [page, *page.frames]:
+            try:
+                await root.evaluate(self._CLIPBOARD_INIT_SCRIPT)
+            except Exception:
+                continue
+
+    async def _reset_captured_copy(self, page: Page) -> None:
+        await self._install_runtime_clipboard_hook(page)
+        for root in [page, *page.frames]:
+            try:
+                await root.evaluate("() => { window.__capturedCopy = ''; }")
+            except Exception:
+                continue
+
+    def _answer_hover_signatures(self, text: str, prompt: str) -> list[str]:
+        prompt_norm = self._normalize_text(prompt)
+        signatures: list[str] = []
+        for line in (text or "").splitlines():
+            normalized = self._normalize_text(line)
+            if len(normalized) < 6 or len(normalized) > 180:
+                continue
+            if prompt_norm and normalized in prompt_norm:
+                continue
+            if normalized in signatures:
+                continue
+            signatures.append(normalized)
+        if not signatures:
+            normalized = self._normalize_text(text)
+            if len(normalized) >= 6:
+                signatures.append(normalized[: min(len(normalized), 160)])
+        # 末尾句子最接近最新回答底部工具栏，前几句可兼容被虚拟滚动截断的页面。
+        ordered: list[str] = []
+        for sig in [*signatures[-4:], *signatures[:2]]:
+            if sig not in ordered:
+                ordered.append(sig)
+        return ordered[:6]
+
+    async def _hover_latest_answer_region_fast(
+        self,
+        page: Page,
+        provider_id: str,
+        before: list[str],
+        prompt: str,
+    ) -> bool:
+        """Fast JS hover for virtualized providers with many message nodes.
+
+        Doubao/Qwen pages can have many generic div/message nodes. The slow
+        Playwright locator walk may spend the whole copy timeout before it
+        reaches the latest answer. This pass locates a recent visible region by
+        answer signatures in one DOM evaluation and dispatches hover events.
+        """
+        current = await self._conversation_snapshot(page, provider_id)
+        answer_text = self._new_conversation_text(provider_id, before, current, prompt)
+        signatures = self._answer_hover_signatures(answer_text, prompt)
+        if not signatures:
+            return False
+        script = r"""(args) => {
+            const signatures = args.signatures || [];
+            const answerLength = Number(args.answerLength || 0);
+            const promptCompact = String(args.prompt || '').replace(/\s+/g, '');
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const targetQuery = [
+                'article',
+                '[data-testid*="message" i]',
+                '[data-testid*="answer" i]',
+                '[class*="message" i]',
+                '[class*="answer" i]',
+                '[class*="response" i]',
+                '[class*="markdown" i]',
+                '[class*="chat" i] [class*="content" i]',
+                'main section',
+                'main div'
+            ].join(',');
+            const findPromptRect = () => {
+                if (!promptCompact || promptCompact.length < 6) return null;
+                const promptNodes = Array.from(document.querySelectorAll(
+                    'main *, [role="main"] *, [class*="chat" i] *, [class*="conversation" i] *, ' +
+                    '[class*="message" i] *, article, main section, main div, main p, main span'
+                )).map((el) => {
+                    if (!visible(el)) return false;
+                    if (el.closest('form,nav,header,footer')) return false;
+                    if (el.querySelector('textarea,[contenteditable="true"],[role="textbox"],input')) return false;
+                    const compact = String(el.innerText || el.textContent || '').replace(/\s+/g, '');
+                    if (!compact.includes(promptCompact)) return false;
+                    if (compact.length > Math.max(1200, promptCompact.length * 20)) return false;
+                    const rect = el.getBoundingClientRect();
+                    return {el, rect, compactLength: compact.length, exact: compact === promptCompact ? 0 : 1};
+                }).filter(Boolean).sort((a, b) => {
+                    const aa = a.rect.width * a.rect.height;
+                    const ba = b.rect.width * b.rect.height;
+                    return (a.exact - b.exact)
+                        || (a.compactLength - b.compactLength)
+                        || (b.rect.bottom - a.rect.bottom)
+                        || (aa - ba);
+                });
+                return promptNodes[0] ? promptNodes[0].rect : null;
+            };
+            const promptRect = findPromptRect();
+            if (!promptRect) return null;
+            const targets = Array.from(document.querySelectorAll(targetQuery)).filter((el) => {
+                if (!visible(el)) return false;
+                if (el.closest('form,nav,header,footer')) return false;
+                if (el.querySelector('textarea,[contenteditable="true"],[role="textbox"],input')) return false;
+                const rect = el.getBoundingClientRect();
+                if (rect.bottom <= promptRect.bottom + 6) return false;
+                const text = norm(el.innerText || el.textContent || '');
+                if (!signatures.some((sig) => text.includes(sig))) return false;
+                if (answerLength > 0 && text.length > Math.max(3200, answerLength * 8)) return false;
+                return true;
+            }).filter(Boolean).sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const at = norm(a.innerText || a.textContent || '').length;
+                const bt = norm(b.innerText || b.textContent || '').length;
+                const ap = answerLength > 0 && at > 320 && at > answerLength * 4 ? 1 : 0;
+                const bp = answerLength > 0 && bt > 320 && bt > answerLength * 4 ? 1 : 0;
+                return (ap - bp) || (Math.abs(at - answerLength) - Math.abs(bt - answerLength)) || (br.bottom - ar.bottom);
+            });
+            const target = targets[0];
+            if (!target) return null;
+            target.scrollIntoView({block: 'center', inline: 'nearest'});
+            const rect = target.getBoundingClientRect();
+            const x = Math.max(rect.left + 8, Math.min(rect.right - 8, rect.left + rect.width / 2));
+            const y = Math.max(rect.top + 8, Math.min(rect.bottom - 8, rect.bottom - 12));
+            for (const type of ['mouseover', 'mouseenter', 'mousemove']) {
+                target.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y}));
+            }
+            return {
+                tag: target.tagName,
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                w: Math.round(rect.width),
+                h: Math.round(rect.height),
+                textLen: norm(target.innerText || target.textContent || '').length,
+                promptBottom: promptRect ? Math.round(promptRect.bottom) : null,
+            };
+        }"""
+        answer_len = len(self._normalize_text(answer_text))
+        for root in [page, *page.frames]:
+            try:
+                target = await root.evaluate(
+                    script, {"signatures": signatures, "answerLength": answer_len, "prompt": prompt}
+                )
+            except Exception:
+                continue
+            if target:
+                _capture_debug(provider_id, "hover_answer_fast", target)
+                await asyncio.sleep(0.2)
+                return True
+        return False
+
+    async def _hover_latest_answer_region(
+        self,
+        page: Page,
+        provider_id: str,
+        before: list[str],
+        prompt: str,
+    ) -> None:
+        """悬停本轮最新回答区域，触发 provider 渲染回答工具栏/复制按钮。"""
+        if provider_id in {"qwen", "doubao"}:
+            if await self._hover_latest_answer_region_fast(page, provider_id, before, prompt):
+                return
+        current = await self._conversation_snapshot(page, provider_id)
+        answer_text = self._new_conversation_text(provider_id, before, current, prompt)
+        signatures = self._answer_hover_signatures(answer_text, prompt)
+        if not signatures:
+            return
+        selectors = [
+            "article",
+            "[data-testid*='message' i]",
+            "[data-testid*='answer' i]",
+            "[class*='message' i]",
+            "[class*='answer' i]",
+            "[class*='response' i]",
+            "[class*='markdown' i]",
+            "[class*='chat' i] [class*='content' i]",
+            "main section",
+            "main div",
+        ]
+        prompt_norm = self._normalize_text(prompt)
+        for selector in selectors:
+            try:
+                loc = page.locator(selector)
+                count = await loc.count()
+            except Exception:
+                continue
+            for idx in range(count - 1, max(-1, count - 80), -1):
+                node = loc.nth(idx)
+                try:
+                    text = await node.inner_text(timeout=500)
+                except Exception:
+                    continue
+                normalized = self._normalize_text(text)
+                if len(normalized) < 16:
+                    continue
+                if prompt_norm and normalized == prompt_norm:
+                    continue
+                if not any(sig in normalized for sig in signatures):
+                    continue
+                try:
+                    await node.scroll_into_view_if_needed(timeout=1_500)
+                    await node.hover(timeout=2_000)
+                    await asyncio.sleep(0.35)
+                    _capture_debug(provider_id, "hover_answer", f"selector={selector} idx={idx}")
+                    return
+                except Exception:
+                    continue
+
+    async def _near_answer_clickable_snapshot(
+        self,
+        page: Page,
+        provider_id: str,
+        before: list[str],
+        prompt: str,
+    ) -> list[dict[str, Any]]:
+        current = await self._conversation_snapshot(page, provider_id)
+        answer_text = self._new_conversation_text(provider_id, before, current, prompt)
+        signatures = self._answer_hover_signatures(answer_text, prompt)
+        if not signatures:
+            return []
+        script = r"""(args) => {
+            const signatures = args.signatures || [];
+            const answerLength = Number(args.answerLength || 0);
+            const promptCompact = String(args.prompt || '').replace(/\s+/g, '');
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const badToolWords = [
+                'ppt创作', 'ppt 生成', 'ppt生成', 'ai生视频', 'ai生图', '视频生成',
+                'ai 播客', 'ai播客', '千问高考', '任务助理', 'ai写作', '录音纪要', '发送消息',
+                'send message', 'new chat', '新建对话'
+            ];
+            const labelOf = (el) => norm([
+                el.getAttribute && el.getAttribute('aria-label'),
+                el.getAttribute && el.getAttribute('title'),
+                el.getAttribute && el.getAttribute('data-testid'),
+                el.getAttribute && el.getAttribute('class'),
+                el.innerText,
+                el.textContent,
+            ].filter(Boolean).join(' ')).slice(0, 180);
+            const targetQuery = [
+                'article',
+                '[data-testid*="message" i]',
+                '[data-testid*="answer" i]',
+                '[class*="message" i]',
+                '[class*="answer" i]',
+                '[class*="response" i]',
+                '[class*="markdown" i]',
+                '[class*="chat" i] [class*="content" i]',
+                'main section',
+                'main div'
+            ].join(',');
+            const findPromptRect = () => {
+                if (!promptCompact || promptCompact.length < 6) return null;
+                const promptNodes = Array.from(document.querySelectorAll(
+                    'main *, [role="main"] *, [class*="chat" i] *, [class*="conversation" i] *, ' +
+                    '[class*="message" i] *, article, main section, main div, main p, main span'
+                )).map((el) => {
+                    if (!visible(el)) return false;
+                    if (el.closest('form,nav,header,footer')) return false;
+                    if (el.querySelector('textarea,[contenteditable="true"],[role="textbox"],input')) return false;
+                    const compact = String(el.innerText || el.textContent || '').replace(/\s+/g, '');
+                    if (!compact.includes(promptCompact)) return false;
+                    if (compact.length > Math.max(1200, promptCompact.length * 20)) return false;
+                    const rect = el.getBoundingClientRect();
+                    return {el, rect, compactLength: compact.length, exact: compact === promptCompact ? 0 : 1};
+                }).filter(Boolean).sort((a, b) => {
+                    const aa = a.rect.width * a.rect.height;
+                    const ba = b.rect.width * b.rect.height;
+                    return (a.exact - b.exact)
+                        || (a.compactLength - b.compactLength)
+                        || (b.rect.bottom - a.rect.bottom)
+                        || (aa - ba);
+                });
+                return promptNodes[0] ? promptNodes[0].rect : null;
+            };
+            const promptRect = findPromptRect();
+            if (!promptRect) return [];
+            const targets = Array.from(document.querySelectorAll(targetQuery)).filter((el) => {
+                if (!visible(el)) return false;
+                if (el.closest('form,nav,header,footer')) return false;
+                if (el.querySelector('textarea,[contenteditable="true"],[role="textbox"],input')) return false;
+                const rect = el.getBoundingClientRect();
+                if (rect.bottom <= promptRect.bottom + 6) return false;
+                const text = norm(el.innerText || el.textContent || '');
+                if (answerLength > 0 && text.length > Math.max(3200, answerLength * 8)) return false;
+                return signatures.some((sig) => text.includes(sig));
+            }).sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const at = norm(a.innerText || a.textContent || '').length;
+                const bt = norm(b.innerText || b.textContent || '').length;
+                const ap = answerLength > 0 && at > 320 && at > answerLength * 4 ? 1 : 0;
+                const bp = answerLength > 0 && bt > 320 && bt > answerLength * 4 ? 1 : 0;
+                return (ap - bp) || (Math.abs(at - answerLength) - Math.abs(bt - answerLength)) || (br.bottom - ar.bottom);
+            });
+            const target = targets[0];
+            if (!target) return [];
+            const tr = target.getBoundingClientRect();
+            const raw = Array.from(document.querySelectorAll('button,[role="button"],a,[tabindex],[aria-label],[title],svg'))
+                .map((el) => el.closest('button,[role="button"],a,[tabindex]') || el);
+            const seen = new Set();
+            const out = [];
+            for (const el of raw) {
+                if (!el || seen.has(el)) continue;
+                seen.add(el);
+                if (!visible(el)) continue;
+                if (el.closest('textarea,[contenteditable="true"],[role="textbox"],input,nav,header,footer,form')) continue;
+                const label = labelOf(el).toLowerCase();
+                if (badToolWords.some((word) => label.includes(word))) continue;
+                const rect = el.getBoundingClientRect();
+                const nearY = rect.top >= tr.top - 80 && rect.bottom <= tr.bottom + 180;
+                const nearX = rect.left >= tr.left - 260 && rect.right <= tr.right + 260;
+                const afterPrompt = rect.top >= promptRect.bottom - 8;
+                if (!nearY || !nearX || !afterPrompt) continue;
+                if (rect.width < 8 || rect.height < 8 || rect.width > 120 || rect.height > 120) continue;
+                const id = `aw-copy-candidate-${out.length}`;
+                el.setAttribute('data-aw-copy-candidate', id);
+                out.push({
+                    id,
+                    tag: el.tagName,
+                    label: labelOf(el),
+                    x: Math.round(rect.left),
+                    y: Math.round(rect.top),
+                    w: Math.round(rect.width),
+                    h: Math.round(rect.height),
+                    distance: Math.round(Math.abs(rect.top - tr.bottom) + Math.abs(rect.left - tr.left)),
+                    promptBottom: promptRect ? Math.round(promptRect.bottom) : null,
+                });
+            }
+            return out.slice(-24);
+        }"""
+        answer_len = len(self._normalize_text(answer_text))
+        for root in [page, *page.frames]:
+            try:
+                items = await root.evaluate(
+                    script, {"signatures": signatures, "answerLength": answer_len, "prompt": prompt}
+                )
+            except Exception:
+                continue
+            if items:
+                _capture_debug(provider_id, "near_clickables", items[-12:])
+                return items
+        _capture_debug(provider_id, "near_clickables", [])
+        return []
+
+    async def _capture_near_answer_copy_candidate(
+        self,
+        page: Page,
+        provider_id: str,
+        before: list[str],
+        prompt: str,
+    ) -> str:
+        """尝试点击最新回答附近的纯图标工具栏按钮，并只接受真实复制产物。"""
+        items = await self._near_answer_clickable_snapshot(page, provider_id, before, prompt)
+        if not items:
+            return ""
+        bad_markers = (
+            "朗读", "语音", "播放", "分享", "share", "赞", "踩", "like", "dislike",
+            "重新", "regenerate", "refresh", "刷新", "删除", "delete", "编辑", "edit",
+            "引用", "quote", "更多问题", "发送", "send", "submit",
+            "PPT", "ppt", "PPT创作", "PPT 生成", "AI生视频", "AI生图", "视频生成",
+            "千问高考", "任务助理", "AI写作", "录音纪要",
+        )
+        ordered = sorted(items, key=lambda item: (int(item.get("distance") or 0), int(item.get("x") or 0)))
+        for item in ordered[:10]:
+            label = str(item.get("label") or "")
+            label_lower = label.lower()
+            if any(marker.lower() in label_lower for marker in bad_markers):
+                _capture_debug(provider_id, "near_click", f"skip label={label[:40]}")
+                continue
+            candidate_id = str(item.get("id") or "")
+            if not candidate_id:
+                continue
+            try:
+                await self._reset_captured_copy(page)
+                loc = page.locator(f"[data-aw-copy-candidate='{candidate_id}']")
+                if not await loc.count():
+                    continue
+                btn = loc.first
+                await btn.hover(timeout=1_000)
+                await btn.click(timeout=2_000)
+                await asyncio.sleep(0.45)
+            except Exception as exc:
+                _capture_debug(provider_id, "near_click", f"id={candidate_id} err={type(exc).__name__}")
+                continue
+            captured = await self._read_captured_copy(page)
+            if self._is_valid_provider_copy(captured, prompt):
+                _capture_debug(provider_id, "near_click", f"id={candidate_id} len={len(self._normalize_text(captured))} used=1")
+                return captured
+            if captured:
+                _capture_debug(provider_id, "near_click", f"id={candidate_id} rejected_len={len(self._normalize_text(captured))}")
+            menu_copy = await self._capture_visible_copy_menu_item(page, provider_id, prompt)
+            if menu_copy:
+                return menu_copy
+        return ""
+
+    async def _after_prompt_clickable_snapshot(self, page: Page, provider_id: str, prompt: str) -> list[dict[str, Any]]:
+        """Find clickable controls that appear after the current user prompt.
+
+        This is the authoritative boundary for Qwen/Doubao copy capture: old
+        answers are above the current prompt, so only controls below this prompt
+        are eligible. We intentionally do not require an answer container match.
+        """
+        script = r"""(args) => {
+            const promptCompact = String(args.prompt || '').replace(/\s+/g, '');
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const labelOf = (el) => norm([
+                el.getAttribute && el.getAttribute('aria-label'),
+                el.getAttribute && el.getAttribute('title'),
+                el.getAttribute && el.getAttribute('data-testid'),
+                el.getAttribute && el.getAttribute('class'),
+                el.innerText,
+                el.textContent,
+            ].filter(Boolean).join(' ')).slice(0, 180);
+            const promptNodes = Array.from(document.querySelectorAll(
+                'main *, [role="main"] *, [class*="chat" i] *, [class*="conversation" i] *, ' +
+                '[class*="message" i] *, article, main section, main div, main p, main span'
+            )).map((el) => {
+                if (!promptCompact || promptCompact.length < 6) return false;
+                if (!visible(el)) return false;
+                if (el.closest('form,nav,header,footer')) return false;
+                if (el.querySelector('textarea,[contenteditable="true"],[role="textbox"],input')) return false;
+                const compact = String(el.innerText || el.textContent || '').replace(/\s+/g, '');
+                if (!compact.includes(promptCompact)) return false;
+                if (compact.length > Math.max(1200, promptCompact.length * 20)) return false;
+                const rect = el.getBoundingClientRect();
+                return {el, rect, compactLength: compact.length, exact: compact === promptCompact ? 0 : 1};
+            }).sort((a, b) => {
+                const aa = a.rect.width * a.rect.height;
+                const ba = b.rect.width * b.rect.height;
+                return (a.exact - b.exact)
+                    || (a.compactLength - b.compactLength)
+                    || (b.rect.bottom - a.rect.bottom)
+                    || (aa - ba);
+            });
+            const promptRect = promptNodes[0] ? promptNodes[0].rect : null;
+            if (!promptRect) return {promptBottom: null, items: []};
+
+            const badToolWords = [
+                'ppt创作', 'ppt 生成', 'ppt生成', 'ai生视频', 'ai生图', '视频生成',
+                'ai 播客', 'ai播客', '千问高考', '任务助理', 'ai写作', '录音纪要',
+                '发送消息', 'send message', 'new chat', '新建对话'
+            ];
+            const raw = Array.from(document.querySelectorAll('button,[role="button"],a,[tabindex],[aria-label],[title],svg'))
+                .map((el) => el.closest('button,[role="button"],a,[tabindex]') || el);
+            const seen = new Set();
+            const out = [];
+            for (const el of raw) {
+                if (!el || seen.has(el)) continue;
+                seen.add(el);
+                if (!visible(el)) continue;
+                if (el.closest('textarea,[contenteditable="true"],[role="textbox"],input,nav,header,footer,form')) continue;
+                const rect = el.getBoundingClientRect();
+                if (rect.top < promptRect.bottom - 8) continue;
+                if (rect.width < 8 || rect.height < 8 || rect.width > 140 || rect.height > 140) continue;
+                const label = labelOf(el).toLowerCase();
+                if (badToolWords.some((word) => label.includes(word))) continue;
+                const id = `aw-after-prompt-copy-candidate-${out.length}`;
+                el.setAttribute('data-aw-after-prompt-copy-candidate', id);
+                out.push({
+                    id,
+                    tag: el.tagName,
+                    label: labelOf(el),
+                    x: Math.round(rect.left),
+                    y: Math.round(rect.top),
+                    w: Math.round(rect.width),
+                    h: Math.round(rect.height),
+                    promptBottom: Math.round(promptRect.bottom),
+                    distance: Math.round(Math.max(0, rect.top - promptRect.bottom) + Math.abs(rect.left - promptRect.left)),
+                });
+            }
+            const rowStats = new Map();
+            for (const item of out) {
+                const row = Math.round(item.y / 12) * 12;
+                item.row = row;
+                const prev = rowStats.get(row) || {count: 0, minX: Infinity};
+                prev.count += 1;
+                prev.minX = Math.min(prev.minX, item.x);
+                rowStats.set(row, prev);
+            }
+            out.sort((a, b) => {
+                const as = rowStats.get(a.row) || {count: 0, minX: Infinity};
+                const bs = rowStats.get(b.row) || {count: 0, minX: Infinity};
+                const aToolbar = as.count >= 4 && as.minX < 900 ? 0 : 1;
+                const bToolbar = bs.count >= 4 && bs.minX < 900 ? 0 : 1;
+                return (aToolbar - bToolbar) || (a.row - b.row) || (a.x - b.x);
+            });
+            return {promptBottom: Math.round(promptRect.bottom), items: out.slice(0, 40)};
+        }"""
+        for root in [page, *page.frames]:
+            try:
+                payload = await root.evaluate(script, {"prompt": prompt})
+            except Exception:
+                continue
+            items = (payload or {}).get("items") if isinstance(payload, dict) else None
+            _capture_debug(provider_id, "after_prompt_clickables", payload)
+            if items:
+                return items
+        return []
+
+    async def _capture_after_prompt_copy_candidate(
+        self,
+        page: Page,
+        provider_id: str,
+        prompt: str,
+    ) -> str:
+        """Click copy-like controls after the current prompt and accept provider copy output."""
+        items = await self._after_prompt_clickable_snapshot(page, provider_id, prompt)
+        if not items:
+            return ""
+        bad_markers = (
+            "朗读", "语音", "播放", "分享", "share", "赞", "踩", "like", "dislike",
+            "重新", "regenerate", "refresh", "刷新", "删除", "delete", "编辑", "edit",
+            "引用", "quote", "更多问题", "发送", "send", "submit",
+            "PPT", "ppt", "PPT创作", "PPT 生成", "AI生视频", "AI生图", "视频生成",
+            "千问高考", "任务助理", "AI写作", "录音纪要", "快速",
+        )
+        for item in items[:32]:
+            label = str(item.get("label") or "")
+            label_lower = label.lower()
+            if any(marker.lower() in label_lower for marker in bad_markers):
+                _capture_debug(provider_id, "after_prompt_click", f"skip label={label[:40]}")
+                continue
+            candidate_id = str(item.get("id") or "")
+            if not candidate_id:
+                continue
+            try:
+                await self._reset_captured_copy(page)
+                loc = page.locator(f"[data-aw-after-prompt-copy-candidate='{candidate_id}']")
+                if await loc.count():
+                    btn = loc.first
+                    await btn.hover(timeout=1_000)
+                    await btn.click(timeout=2_000)
+                else:
+                    x = float(item.get("x") or 0) + float(item.get("w") or 0) / 2
+                    y = float(item.get("y") or 0) + float(item.get("h") or 0) / 2
+                    if x <= 0 or y <= 0:
+                        continue
+                    await page.mouse.move(x, y)
+                    await page.mouse.click(x, y)
+                await asyncio.sleep(0.3)
+            except Exception as exc:
+                _capture_debug(provider_id, "after_prompt_click", f"id={candidate_id} err={type(exc).__name__}")
+                continue
+            captured = await self._read_captured_copy(page)
+            if self._is_valid_provider_copy(captured, prompt):
+                _capture_debug(
+                    provider_id,
+                    "after_prompt_click",
+                    f"id={candidate_id} len={len(self._normalize_text(captured))} used=1",
+                )
+                return captured
+            if captured:
+                _capture_debug(
+                    provider_id,
+                    "after_prompt_click",
+                    f"id={candidate_id} rejected_len={len(self._normalize_text(captured))}",
+                )
+            else:
+                _capture_debug(provider_id, "after_prompt_click", f"id={candidate_id} empty")
+            menu_copy = await self._capture_visible_copy_menu_item(page, provider_id, prompt)
+            if menu_copy:
+                return menu_copy
+        return ""
+
+    async def _capture_visible_copy_menu_item(
+        self,
+        page: Page,
+        provider_id: str,
+        prompt: str,
+    ) -> str:
+        """点击纯图标按钮后若弹出菜单，再从菜单中选择复制项。"""
+        menu_selectors = [
+            "[role='menuitem']:has-text('复制')",
+            "[role='menuitem']:has-text('Copy')",
+            "li:has-text('复制')",
+            "button:has-text('复制')",
+            "[role='button']:has-text('复制')",
+            "[aria-label*='复制']",
+            "[title*='复制']",
+        ]
+        for selector in menu_selectors:
+            try:
+                loc = page.locator(selector)
+                count = await loc.count()
+            except Exception:
+                continue
+            if not count:
+                continue
+            for idx in range(count - 1, max(-1, count - 4), -1):
+                try:
+                    await self._reset_captured_copy(page)
+                    await loc.nth(idx).click(timeout=1_500)
+                    await asyncio.sleep(0.45)
+                except Exception:
+                    continue
+                captured = await self._read_captured_copy(page)
+                if self._is_valid_provider_copy(captured, prompt):
+                    _capture_debug(provider_id, "copy_menu", f"selector={selector} idx={idx} used=1")
+                    return captured
+        return ""
 
     async def _capture_via_copy_button(
         self,
@@ -397,112 +1057,30 @@ class AIWebBridge:
         """
         try:
             await self._reset_captured_copy(page)
-            for selector in self._COPY_BUTTON_SELECTORS:
-                try:
-                    loc = page.locator(selector)
-                    count = await loc.count()
-                except Exception:
-                    continue
-                if not count or count <= before_copy_count:
-                    continue
-                btn = loc.nth(count - 1)  # 最后一个=本轮最新回答的复制按钮
-                try:
-                    await btn.scroll_into_view_if_needed(timeout=1_500)
-                    await btn.hover(timeout=1_500)
-                    await btn.click(timeout=2_500)
-                except Exception:
-                    continue
-                await asyncio.sleep(0.5)
-                captured = await self._read_captured_copy(page)
-                if len(self._normalize_text(captured)) >= 8:
-                    return captured
+            answer_hint = self._new_conversation_text(
+                provider_id, before, await self._conversation_snapshot(page, provider_id), prompt
+            )
+            try:
+                await page.keyboard.press("End")
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+            await self._hover_latest_answer_region(page, provider_id, before, prompt)
+            captured = await self._capture_after_prompt_copy_candidate(page, provider_id, prompt)
+            if self._is_valid_provider_copy(captured, prompt):
+                return captured
             # 有些站点不会增加 copy 按钮数量，只会复用最后一条消息工具栏；只在页面已有新增正文时兜底点最后一个。
-            fallback_text = self._new_conversation_text(provider_id, before, await self._conversation_snapshot(page, provider_id), prompt)
-            if len(self._normalize_text(fallback_text)) >= 80:
-                for selector in self._COPY_BUTTON_SELECTORS:
-                    try:
-                        loc = page.locator(selector)
-                        count = await loc.count()
-                    except Exception:
-                        continue
-                    if not count:
-                        continue
-                    btn = loc.nth(count - 1)
-                    try:
-                        await btn.scroll_into_view_if_needed(timeout=1_500)
-                        await btn.hover(timeout=1_500)
-                        await btn.click(timeout=2_500)
-                    except Exception:
-                        continue
-                    await asyncio.sleep(0.5)
-                    captured = await self._read_captured_copy(page)
-                    if len(self._normalize_text(captured)) >= 20:
-                        return captured
+            fallback_text = answer_hint or self._new_conversation_text(
+                provider_id, before, await self._conversation_snapshot(page, provider_id), prompt
+            )
+            if self._normalize_text(fallback_text):
+                await self._hover_latest_answer_region(page, provider_id, before, prompt)
+                captured = await self._capture_near_answer_copy_candidate(page, provider_id, before, prompt)
+                if self._is_valid_provider_copy(captured, prompt):
+                    return captured
+            _capture_debug(provider_id, "copy_button", "no_after_prompt_coordinate_candidate")
         except Exception as exc:
             log.warning("provider=%s copy-button capture failed: %s", provider_id, exc)
-        return ""
-
-    # 千问「复制为 Markdown」菜单项的常见定位（文本/aria-label 含 Markdown）。
-    _QWEN_MD_OPTION_SELECTORS = [
-        "[role='menuitem']:has-text('Markdown')",
-        "[role='menuitem']:has-text('markdown')",
-        "li:has-text('复制为 Markdown')",
-        "li:has-text('复制为Markdown')",
-        "button:has-text('复制为 Markdown')",
-        "div:has-text('复制为 Markdown')",
-        "[aria-label*='Markdown' i]",
-    ]
-    # 触发复制菜单的入口。千问真实结构：复制按钮旁一个 aria-haspopup="menu" 的小箭头(chevron)按钮，
-    # 无文本/无"复制"label，故优先按 haspopup 定位；再退回更多/下拉/箭头等通用形态。
-    _QWEN_COPY_MENU_TRIGGERS = [
-        "button[aria-haspopup='menu']",
-        "[aria-haspopup='menu']",
-        "button[aria-label*='复制']",
-        "[class*='copy'] button",
-        "button[aria-label*='更多' i]",
-        "button[aria-label*='More' i]",
-        "[class*='copy'] [class*='arrow']",
-        "[class*='copy'] [class*='dropdown']",
-    ]
-
-    async def _capture_qwen_markdown(self, page: Page, prompt: str) -> str:
-        """千问优先用「复制为 Markdown」拿带标题的完整 markdown。
-
-        hover 出 chevron 菜单 → 点「复制为 Markdown」→ 读 document-start 钩子捕获的复制内容
-        （千问自己写入的权威 markdown，本就不含推荐追问）。读不到返回空，由调用方回退。不做字符过滤。
-        """
-        try:
-            await self._reset_captured_copy(page)
-            for trig in self._QWEN_COPY_MENU_TRIGGERS:
-                try:
-                    loc = page.locator(trig)
-                    n = await loc.count()
-                    if not n:
-                        continue
-                    item = loc.nth(n - 1)
-                    await item.scroll_into_view_if_needed(timeout=1_500)
-                    await item.hover(timeout=1_500)
-                    await item.click(timeout=2_000)
-                except Exception:
-                    continue
-                await asyncio.sleep(0.4)
-                # 菜单出现后点「复制为 Markdown」
-                for opt in self._QWEN_MD_OPTION_SELECTORS:
-                    try:
-                        ol = page.locator(opt)
-                        if not await ol.count():
-                            continue
-                        await ol.nth(await ol.count() - 1).click(timeout=2_000)
-                    except Exception:
-                        continue
-                    await asyncio.sleep(0.5)
-                    cap = await self._read_captured_copy(page)
-                    if len(self._normalize_text(cap)) >= 20:  # 排除菜单标签等短串（非内容过滤）
-                        _capture_debug("qwen", "copy_markdown", f"len={len(self._normalize_text(cap))} used=1")
-                        return cap
-        except Exception as exc:
-            log.warning("provider=qwen copy-markdown capture failed: %s", exc)
-        _capture_debug("qwen", "copy_markdown", "未取到 Markdown，回退")
         return ""
 
     async def _session(self, provider_id: str) -> ProviderSession:
@@ -550,6 +1128,35 @@ class AIWebBridge:
             should_goto = True
         if should_goto:
             await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+    async def _wait_for_pre_prompt_snapshot(self, page: Page, provider_id: str) -> None:
+        """发送前等待会话页从 SSR/路由壳加载到稳定对话状态。
+
+        before 快照是后续 diff、悬停最新回答、复制按钮定位的基准。若这里取到
+        页面壳或半加载状态，后面会把历史正文误判为本轮新增内容。
+        """
+        deadline = asyncio.get_event_loop().time() + 18
+        previous = ""
+        stable = 0
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                snapshot = await self._conversation_snapshot(page, provider_id)
+            except Exception:
+                snapshot = []
+            normalized = self._normalize_text("\n".join(snapshot[-30:]))
+            loading_shell = any("_SSR_DATA" in item or "_ROUTER_DATA" in item for item in snapshot)
+            conversation_url = self._is_conversation_url(provider_id, page.url)
+            if not loading_shell and (normalized or not conversation_url):
+                if normalized == previous:
+                    stable += 1
+                else:
+                    stable = 0
+                    previous = normalized
+                if stable >= 1:
+                    _capture_debug(provider_id, "pre_prompt_ready", f"snapshot={len(snapshot)} len={len(normalized)}")
+                    return
+            await asyncio.sleep(1)
+        _capture_debug(provider_id, "pre_prompt_ready", "timeout")
 
     async def _drop_session(self, provider_id: str) -> None:
         session = self._sessions.pop(provider_id, None)
@@ -912,15 +1519,16 @@ class AIWebBridge:
             if self._is_provider_noise("qwen", line):
                 continue
             lines.append(line)
-        # 行级去重保序：千问会把历史提问在底部再列一遍，去掉完全重复的行。
+        # 只去掉相邻重复行。全局去重会吞掉用户重复提问后的同文回答，
+        # 导致 before/current diff 永远看不到本轮短答案。
         deduped: list[str] = []
-        seen: set[str] = set()
+        last_norm = ""
         for line in lines:
             norm = self._normalize_text(line)
-            if norm in seen:
+            if norm and norm == last_norm:
                 continue
-            seen.add(norm)
             deduped.append(line)
+            last_norm = norm
         if CAPTURE_DEBUG:
             _capture_debug("qwen", "qwen_lines", [self._normalize_text(b)[:50] for b in deduped[-10:]])
         return deduped
@@ -1069,11 +1677,17 @@ class AIWebBridge:
         "[role='button'][aria-label*='复制']",
         "button[title*='复制']",
         "div[aria-label*='复制']",
+        "[aria-label*='复制']",
+        "[title*='复制']",
         "button[aria-label*='Copy' i]",
         "button[title*='Copy' i]",
+        "[aria-label*='Copy' i]",
+        "[title*='Copy' i]",
         "[data-testid*='copy']",
+        "[class*='copy']",
         "[class*='copy'] button",
         "button:has-text('复制')",
+        "[role='button']:has-text('复制')",
     ]
 
     async def _copy_button_count(self, page: Page) -> int:
@@ -1107,16 +1721,27 @@ class AIWebBridge:
         best = ""
         best_norm = ""
         plateau = 0
+        previous_norm = ""
+        stitched_lines: list[str] = []
         saw_generating = False
         composer_ready = False
         conservative_plateau = 10 if provider_id in {"qwen", "doubao"} else 4
-        copy_ready_plateau = 2 if provider_id in {"qwen", "doubao"} else 1
+        copy_ready_plateau = {"qwen": 5, "doubao": 2}.get(provider_id, 1)
         while asyncio.get_event_loop().time() < deadline:
             current = await self._conversation_snapshot(page, provider_id)
             new_text = self._new_conversation_text(provider_id, before, current, prompt)
+            if provider_id in {"qwen", "doubao"}:
+                stitched_lines = self._stitch_streaming_lines(stitched_lines, new_text, provider_id)
+                stitched_text = "\n".join(stitched_lines).strip()
+                if len(self._normalize_text(stitched_text)) > len(self._normalize_text(new_text)):
+                    new_text = stitched_text
             new_norm = self._normalize_text(new_text)
+            content_changed = bool(new_norm) and new_norm != previous_norm
+            previous_norm = new_norm
             if len(new_norm) > len(best_norm):
                 best, best_norm, plateau = new_text, new_norm, 0
+            elif provider_id in {"qwen", "doubao"} and content_changed:
+                plateau = 0
             elif best_norm:
                 plateau += 1
             generating = await self._is_generating(page, provider_id)
@@ -1340,17 +1965,29 @@ class AIWebBridge:
         _capture_debug(provider_id, "EMPTY_CAPTURE page_innerText_tail", repr(raw))
 
     def _new_conversation_text(self, provider_id: str, before: list[str], current: list[str], prompt: str) -> str:
-        before_set = {self._normalize_text(item) for item in before}
+        before_counts: dict[str, int] = {}
+        for item in before:
+            normalized_before = self._normalize_text(item)
+            if normalized_before:
+                before_counts[normalized_before] = before_counts.get(normalized_before, 0) + 1
         norm_prompt = self._normalize_text(prompt)
+        prompt_line_set = self._prompt_line_norms(prompt)
         candidates = []
         dropped = {"before": 0, "prompt": 0, "noise": 0}
         for item in current:
             normalized = self._normalize_text(item)
-            if not normalized or normalized in before_set:
+            if not normalized:
+                dropped["before"] += 1
+                continue
+            if before_counts.get(normalized, 0) > 0:
+                before_counts[normalized] -= 1
                 dropped["before"] += 1
                 continue
             if self._is_provider_noise(provider_id, item):
                 dropped["noise"] += 1
+                continue
+            if self._is_prompt_echo(item, normalized, norm_prompt, prompt_line_set):
+                dropped["prompt"] += 1
                 continue
             # prompt 被回显进回答容器时，剥离 prompt 子串而非丢弃整条。
             stripped = item
@@ -1381,6 +2018,45 @@ class AIWebBridge:
             )
         return ""
 
+    def _prompt_line_norms(self, prompt: str) -> set[str]:
+        """Normalize meaningful prompt lines so provider page echoes can be filtered.
+
+        Qwen/Doubao expose the conversation as linear `innerText`. The latest
+        user prompt may appear line by line next to the answer, so comparing
+        only with the full prompt misses single-line echoes.
+        """
+        norms: set[str] = set()
+        for line in (prompt or "").splitlines():
+            normalized = self._normalize_text(line)
+            if len(normalized) >= 8:
+                norms.add(normalized)
+        return norms
+
+    def _is_prompt_echo(
+        self,
+        item: str,
+        normalized: str,
+        norm_prompt: str,
+        prompt_line_set: set[str],
+    ) -> bool:
+        if not normalized or not norm_prompt:
+            return False
+        if normalized in prompt_line_set:
+            return True
+        # Line-based snapshots often return short prompt bullets/headings as
+        # separate items. Avoid dropping long prose that happens to reuse a
+        # source sentence from the prompt.
+        if len(normalized) <= 160 and normalized in norm_prompt:
+            return True
+        meaningful = [
+            self._normalize_text(line)
+            for line in item.splitlines()
+            if len(self._normalize_text(line)) >= 8
+        ]
+        if meaningful and all(line in prompt_line_set or (len(line) <= 160 and line in norm_prompt) for line in meaningful):
+            return True
+        return False
+
     def _dedupe_candidates(self, candidates: list[str]) -> list[str]:
         """按 DOM 顺序双向包含式去重：丢弃属于已留块子串的候选，并用更长候选替换被包含的已留块。"""
         kept: list[str] = []
@@ -1398,10 +2074,50 @@ class AIWebBridge:
             kept_norm.append(normalized)
         return kept
 
+    def _stitch_streaming_lines(self, existing: list[str], text: str, provider_id: str) -> list[str]:
+        """Stitch rolling visible lines into one answer for providers with virtualized DOM.
+
+        Qwen/Doubao may only keep a moving tail of the assistant response in
+        `innerText` while the answer is streaming. Waiting for the final snapshot
+        alone can therefore lose the first half if the copy button capture fails.
+        This keeps a line-level transcript from all snapshots in this run.
+        """
+        stitched = list(existing)
+        stitched_norm = [self._normalize_text(item) for item in stitched]
+        for raw_line in (text or "").splitlines():
+            line = raw_line.strip()
+            normalized = self._normalize_text(line)
+            if len(normalized) < 8:
+                continue
+            if self._is_provider_noise(provider_id, line):
+                continue
+            if provider_id == "qwen" and self._looks_like_qwen_suggestion(line):
+                continue
+            if provider_id == "doubao" and self._looks_like_doubao_suggestion(line):
+                continue
+            if normalized in stitched_norm:
+                continue
+            replaced = False
+            for idx, old_norm in enumerate(stitched_norm):
+                if old_norm and old_norm in normalized:
+                    stitched[idx] = line
+                    stitched_norm[idx] = normalized
+                    replaced = True
+                    break
+                if normalized in old_norm:
+                    replaced = True
+                    break
+            if replaced:
+                continue
+            stitched.append(line)
+            stitched_norm.append(normalized)
+        return stitched[-80:]
+
     def _merge_candidates(self, candidates: list[str], provider_id: str) -> str:
         unique: list[str] = []
+        min_len = 6 if provider_id in {"qwen", "doubao"} else 12
         for item in self._dedupe_candidates(candidates):
-            if len(self._normalize_text(item)) < 12:
+            if len(self._normalize_text(item)) < min_len:
                 continue
             unique.append(item)
         if not unique:
@@ -1429,6 +2145,27 @@ class AIWebBridge:
     def _trim_result(self, text: str) -> str:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         return "\n".join(lines)[-30000:]
+
+    def _is_valid_provider_copy(self, text: str, prompt: str) -> bool:
+        """校验复制按钮产物是否像 provider 回答，而不是用户提问或整段发送 prompt。"""
+        copied_norm = self._normalize_text(text)
+        if not copied_norm:
+            return False
+        provider_prompt_markers = ("[SYSTEM]", "[HUMAN]", "用户输入：", "请按统一格式输出")
+        prompt_norm = self._normalize_text(prompt)
+        if not prompt_norm:
+            return True
+        if copied_norm == prompt_norm:
+            return False
+        head = copied_norm[: max(260, min(len(copied_norm), 1600))]
+        if len(prompt_norm) >= 30 and head.startswith(prompt_norm[: min(len(prompt_norm), 260)]):
+            return False
+        if len(prompt_norm) >= 120 and prompt_norm[:120] in head:
+            return False
+        marker_hits = sum(1 for marker in provider_prompt_markers if marker in text)
+        if marker_hits >= 2 and prompt_norm[:80] in copied_norm:
+            return False
+        return True
 
     def _clean_provider_result(self, provider_id: str, text: str) -> str:
         if provider_id == "deepseek":
@@ -1621,6 +2358,12 @@ class AIWebBridge:
             return False
         if len(compact) > 42:
             return False
+        suggestion_prefixes = (
+            "写一篇", "推荐一些", "推荐几", "如何", "怎么", "帮我", "给这篇", "改成", "换成",
+            "在散文中", "为这篇", "扩写", "续写", "总结一下",
+        )
+        if not compact.endswith(("。", ".")) and any(compact.startswith(prefix) for prefix in suggestion_prefixes):
+            return True
         if compact.endswith(("？", "?", "。", ".")) and (
             "用" in compact
             or "如何" in compact

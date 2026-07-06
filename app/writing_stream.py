@@ -17,7 +17,7 @@ from app.writing_invocations import (
 from app.writing_harness import summarize_state_delta
 from app.project_kinds import project_kind
 from app.writing_sop import sop_for_task
-from app.workflow_status import draft_stages, save_pending_workflow_snapshot
+from app.workflow_status import STAGE_LABELS, draft_stages, save_pending_workflow_snapshot
 from app.writing_graph import GRAPH_RECURSION_LIMIT, get_graph
 from app.writing_memory import thread_id_for
 
@@ -29,6 +29,14 @@ from app.writing_memory import thread_id_for
 # 只透出"正文产出"那次 LLM 调用的 token；逐篇提要(digest)/审查的 token 不外泄；
 # provider 抓取在 provider_fanout 节点，只发 node 进度，绝不逐字（沿用复制按钮一次性取整篇）。
 _TOKEN_TAG = "prose_merge"
+
+
+def _next_pending_stage(stages: list[str], done_nodes: list[str], fallback: str = "") -> str:
+    done = set(done_nodes)
+    for stage in stages:
+        if stage not in done:
+            return stage
+    return fallback or (stages[-1] if stages else "")
 
 
 def _sse(event: str, data: Any) -> str:
@@ -144,6 +152,19 @@ def stream_draft(inputs: dict[str, Any], track: str = "create", novel_id: str = 
                         )
                         for provider in payload.get("order") or []:
                             update_provider(novel_id, invocation_id, provider, status="queued")
+                        if "provider_fanout" in stages:
+                            save_pending_workflow_snapshot(
+                                novel_id=novel_id,
+                                track=track,
+                                invocation_id=invocation_id,
+                                stages=stages,
+                                current="provider_fanout",
+                                done=done_nodes,
+                                task=task,
+                                chapter=chapter,
+                                status="running",
+                                source="backend_provider_fanout",
+                            )
                     else:
                         update_provider(
                             novel_id,
@@ -162,8 +183,43 @@ def stream_draft(inputs: dict[str, Any], track: str = "create", novel_id: str = 
                             node="provider_fanout",
                             provider=payload.get("provider"),
                             details={"status": payload.get("status"), "elapsed": payload.get("elapsed")},
-                        )
+                            )
                     yield _sse("provider", payload)
+                elif isinstance(payload, dict) and payload.get("type") == "stage":
+                    stage = str(payload.get("stage") or "")
+                    stage_status = str(payload.get("status") or "running")
+                    if not stage:
+                        continue
+                    details = {k: v for k, v in payload.items() if k not in {"type", "stage", "status"}}
+                    append_event(
+                        novel_id,
+                        invocation_id,
+                        "graph_stage",
+                        f"{STAGE_LABELS.get(stage, stage)}{'完成' if stage_status == 'done' else '进行中'}",
+                        node=stage,
+                        status=stage_status,
+                        details=details,
+                    )
+                    if stage in stages:
+                        if stage_status == "done" and stage not in done_nodes:
+                            done_nodes.append(stage)
+                        stage_index = stages.index(stage)
+                        current_stage = stage
+                        if stage_status == "done" and stage_index + 1 < len(stages):
+                            current_stage = stages[stage_index + 1]
+                        save_pending_workflow_snapshot(
+                            novel_id=novel_id,
+                            track=track,
+                            invocation_id=invocation_id,
+                            stages=stages,
+                            current=current_stage,
+                            done=done_nodes,
+                            task=task,
+                            chapter=chapter,
+                            status="running",
+                            source="backend_stream_stage",
+                        )
+                    yield _sse("stage", {"stage": stage, "status": stage_status, **details})
             elif mode == "updates":
                 for node, _delta in (payload or {}).items():
                     last_node = node
@@ -235,9 +291,10 @@ def stream_draft(inputs: dict[str, Any], track: str = "create", novel_id: str = 
                         node=node,
                         status="awaiting_confirm" if node == "provider_confirm_gate" else "running",
                     )
-                    if node not in done_nodes:
+                    awaiting_provider_confirm = node == "provider_confirm_gate"
+                    if not awaiting_provider_confirm and node not in done_nodes:
                         done_nodes.append(node)
-                    next_node = "provider_confirm_gate" if node == "provider_confirm_gate" else node
+                    next_node = "provider_confirm_gate" if awaiting_provider_confirm else _next_pending_stage(stages, done_nodes, fallback=node)
                     save_pending_workflow_snapshot(
                         novel_id=novel_id,
                         track=track,
@@ -247,7 +304,7 @@ def stream_draft(inputs: dict[str, Any], track: str = "create", novel_id: str = 
                         done=done_nodes,
                         task=task,
                         chapter=chapter,
-                        status="awaiting_confirm" if node == "provider_confirm_gate" else "running",
+                        status="awaiting_confirm" if awaiting_provider_confirm else "running",
                         source="backend_stream",
                     )
                     node_payload = {"node": node}

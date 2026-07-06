@@ -5,6 +5,14 @@ from langchain_openai import ChatOpenAI
 from app.config import ModelConfig, RuntimeConfig
 
 
+def _supports_temperature(spec: ModelConfig) -> bool:
+    """Some OpenAI-compatible gateways reject temperature for newer Claude models."""
+    model = (spec.model or "").strip().lower()
+    if model.startswith("claude-") and ("opus-4" in model or "sonnet-4" in model):
+        return False
+    return True
+
+
 def create_default_llm(config: RuntimeConfig) -> ChatOpenAI:
     if config.llm_provider != "deepseek":
         raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")
@@ -41,10 +49,11 @@ def create_llm(
         "model": spec.model,
         "api_key": spec.api_key.get_secret_value(),
         "base_url": spec.base_url,
-        "temperature": temperature,
         "timeout": timeout,
         "max_retries": max_retries,
     }
+    if _supports_temperature(spec):
+        kwargs["temperature"] = temperature
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     return ChatOpenAI(**kwargs)

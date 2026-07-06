@@ -15,7 +15,7 @@ from langgraph.graph.message import add_messages
 from app import writing_tools
 from app.config import ROOT
 from app.project_paths import outputs_dir
-from app.project_kinds import SHORT_FILM_KIND
+from app.project_kinds import SHORT_FILM_KIND, STRONG_NOVEL_KIND
 from app.writing_sop import sop_for_task
 from app.writing_generate import generate_prose
 from app.writing_harness import check_request_text, decide_provider_route, estimate_budget
@@ -33,6 +33,21 @@ GRAPH_RECURSION_LIMIT = 30
 # M3：对话消息超过此 token 阈值时，自动把旧消息压成前情摘要，保留最近 KEEP_RECENT 条。
 COMPRESS_TOKEN_THRESHOLD = 4000
 KEEP_RECENT_MESSAGES = 6
+
+
+def _emit_graph_stage(stage: str, status: str = "running", **details: Any) -> None:
+    try:
+        from langgraph.config import get_stream_writer
+
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    if not writer:
+        return
+    try:
+        writer({"type": "stage", "stage": stage, "status": status, **details})
+    except Exception:
+        pass
 
 
 GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
@@ -1391,10 +1406,33 @@ def node_prompt_refine(state: WritingState) -> WritingState:
         return {"refined_prompt": {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, "actions": actions}
 
 
+def _should_merge_provider_outputs(state: WritingState, bundle: dict, task: str) -> bool:
+    project_kind = bundle.get("project_kind") or state.get("project_kind", "")
+    task_key = str(task or "").strip().lower()
+    if project_kind == SHORT_FILM_KIND:
+        return True
+    if task_key in {"prose", "expansion", "fix"}:
+        return True
+    if project_kind != STRONG_NOVEL_KIND:
+        return False
+    analysis = state.get("request_analysis") or bundle.get("request_analysis") or {}
+    if str(analysis.get("creative_stage") or "").strip().lower() == "prose":
+        return True
+    request_text = "\n".join(filter(None, [
+        str(state.get("user_message") or ""),
+        str(bundle.get("user_request") or ""),
+        str(bundle.get("request_text") or ""),
+    ]))
+    return bool(
+        re.search(r"(正文|章节正文|第\s*[\d零〇一二两三四五六七八九十百]+\s*[章节回])", request_text)
+        and re.search(r"(写|编写|生成|创作|完成|输出|续写|扩写|精修|改写|重写)", request_text)
+    )
+
+
 def node_generate(state: WritingState) -> WritingState:
     """正文主产出：provider 答案为主。
 
-    - 有 provider 答案：prose → 五维提要+取最优融合成 1 篇；其他环节 → 直接用 provider 答案（择最长）。
+    - 有 provider 答案：正文类任务 → 多维提要+取最优融合成 1 篇；其他环节 → 直接用 provider 答案（择最长）。
     - 无 provider 答案（全失败/未开 provider）：
         · 创作模式+AI（use_provider_source）→ 标记 provider_failed，前端给"用API生成"兜底按钮。
         · 否则 → 按用户选择的“创作”模型做材料驱动生成。
@@ -1407,8 +1445,7 @@ def node_generate(state: WritingState) -> WritingState:
     use_provider = bool(state.get("use_provider_source")) and route.get("decision") != "single_agent"
 
     if answers:
-        project_kind = bundle.get("project_kind") or state.get("project_kind", "")
-        if task == "prose" or project_kind == SHORT_FILM_KIND:
+        if _should_merge_provider_outputs(state, bundle, task):
             out = _merge_provider_outputs(bundle, answers, actions, task=task)
             return {"draft": out["draft"], "merge_info": out["merge_info"],
                     "actions": actions, "iterations": state.get("iterations", 0) + 1,
@@ -1545,19 +1582,29 @@ def _merge_provider_outputs(bundle: dict, answers: list[dict], actions: list[str
 
 
 def node_pre_review(state: WritingState) -> WritingState:
+    _emit_graph_stage("pre_review", "running")
     if is_novel_planning_task(state.get("project_kind"), state.get("task")):
         actions = list(state.get("actions") or [])
         actions.append("pre_review_skipped(novel_planning)")
+        _emit_graph_stage("pre_review", "done", skipped=True, reason="novel_planning", blocking_count=0)
         return {"pre_review": {"ok": True, "passed": True, "blocking_count": 0, "issues": []}, "actions": actions}
     if state.get("project_kind") in {"short_film", "generic"}:
         actions = list(state.get("actions") or [])
         actions.append("pre_review_skipped(generic)")
+        _emit_graph_stage("pre_review", "done", skipped=True, reason="generic", blocking_count=0)
         return {"pre_review": {"ok": True, "passed": True, "blocking_count": 0, "issues": []}, "actions": actions}
     bundle = state.get("bundle") or {}
     outline = (bundle.get("materials") or {}).get("chapter_outline", "") or ""
     pr = writing_tools.pre_review_text(state.get("draft", ""), outline=outline)
     actions = list(state.get("actions") or [])
     actions.append("pre_review_text")
+    _emit_graph_stage(
+        "pre_review",
+        "done",
+        passed=bool(pr.get("passed", True)),
+        blocking_count=int(pr.get("blocking_count") or 0),
+        warning_count=int(pr.get("warning_count") or 0),
+    )
     return {"pre_review": pr, "actions": actions}
 
 
@@ -1571,6 +1618,7 @@ def _enhancement_brief(bundle: dict[str, Any]) -> str:
 
 
 def node_model_review(state: WritingState) -> WritingState:
+    _emit_graph_stage("model_review", "running")
     bundle = state.get("bundle") or {}
     materials = bundle.get("materials") or {}
     technique_context = bundle.get("technique_context") or (state.get("merge_info") or {}).get("technique_context") or {}
@@ -1610,6 +1658,7 @@ def node_model_review(state: WritingState) -> WritingState:
     if strategy.get("mode") == "skip":
         actions = list(state.get("actions") or [])
         actions.append(f"model_review_skipped({strategy.get('reason')})")
+        _emit_graph_stage("model_review", "done", skipped=True, mode="skip", reason=strategy.get("reason"))
         return {
             "review_strategy": strategy,
             "model_review": {"passed": True, "overall_score": 0, "model": "skipped", "strategy": strategy},
@@ -1639,6 +1688,14 @@ def node_model_review(state: WritingState) -> WritingState:
             },
         )
         actions.append(f"model_review({review.get('model')})")
+        _emit_graph_stage(
+            "model_review",
+            "done",
+            mode="deterministic_checklist",
+            model=review.get("model"),
+            passed=bool(review.get("passed", True)),
+            overall_score=int(review.get("overall_score") or 0),
+        )
         return {"review_strategy": strategy, "model_review": review, "actions": actions}
     mr = model_review_cross(
         state.get("draft", ""),
@@ -1652,6 +1709,14 @@ def node_model_review(state: WritingState) -> WritingState:
         mr["technique_context"] = technique_context
     actions = list(state.get("actions") or [])
     actions.append(f"model_review({mr.get('model')})")
+    _emit_graph_stage(
+        "model_review",
+        "done",
+        mode=strategy.get("mode"),
+        model=mr.get("model"),
+        passed=bool(mr.get("passed", True)),
+        overall_score=int(mr.get("overall_score") or 0),
+    )
     return {"review_strategy": strategy, "model_review": mr, "actions": actions}
 
 
