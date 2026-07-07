@@ -4,7 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Writing 协作界面</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260706-v018-sync" />
+    <script>
+      (() => {
+        const allowed = new Set(["light", "dark", "eye"]);
+        const theme = localStorage.getItem("writing.ui.theme") || "light";
+        document.documentElement.dataset.theme = allowed.has(theme) ? theme : "light";
+      })();
+    </script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-theme-focus" />
   </head>
   <body>
     <main class="shell">
@@ -132,6 +139,14 @@
             <div id="providerChecks" class="provider-checks"></div>
             <button id="chatBtn" class="button success" type="button">聊天</button>
             <button id="sendBtn" class="button primary" type="submit">创作</button>
+            <label class="theme-control">
+              <span>主题</span>
+              <select id="themeSelect" class="select theme-select" aria-label="界面主题">
+                <option value="light">明亮</option>
+                <option value="dark">黑夜</option>
+                <option value="eye">护眼</option>
+              </select>
+            </label>
           </div>
         </form>
       </section>
@@ -193,6 +208,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260706-user-confirm-gate"></script>
+    <script src="/static/app.js?v=20260707-theme-switcher"></script>
   </body>
 </html>

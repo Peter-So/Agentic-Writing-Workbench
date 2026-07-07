@@ -63,6 +63,7 @@ const sendBtn = document.querySelector("#sendBtn");
 const chatBtn = document.querySelector("#chatBtn");
 const doctorBtn = document.querySelector("#doctorBtn");
 const upgradeBtn = document.querySelector("#upgradeBtn");
+const themeSelect = document.querySelector("#themeSelect");
 const chatModelSelect = document.querySelector("#chatModelSelect");
 const writingModelSelect = document.querySelector("#writingModelSelect");
 const reviewModelSelect = document.querySelector("#reviewModelSelect");
@@ -101,6 +102,8 @@ const collapsedFileDirs = new Set();
 const AI_TOGGLE_KEY = "writing.ui.aiEnabled";
 const PROVIDER_PREFS_KEY = "writing.ui.providerPrefs";
 const MODEL_PREFS_KEY = "writing.ui.modelPrefs";
+const THEME_PREF_KEY = "writing.ui.theme";
+const THEME_VALUES = new Set(["light", "dark", "eye"]);
 let modelRegistry = { models: [], image_models: [], roles: {} };
 let workflowRegistry = { presets: {}, labels: {} };
 
@@ -268,6 +271,22 @@ function loadBoolPref(key, fallback = false) {
   const raw = localStorage.getItem(key);
   if (raw === null) return fallback;
   return raw === "1";
+}
+
+function normalizeTheme(value) {
+  const theme = String(value || "").trim();
+  return THEME_VALUES.has(theme) ? theme : "light";
+}
+
+function applyTheme(theme, persist = true) {
+  const normalized = normalizeTheme(theme);
+  document.documentElement.dataset.theme = normalized;
+  if (themeSelect) themeSelect.value = normalized;
+  if (persist) localStorage.setItem(THEME_PREF_KEY, normalized);
+}
+
+function initTheme() {
+  applyTheme(localStorage.getItem(THEME_PREF_KEY), false);
 }
 
 function saveBoolPref(key, value) {
@@ -5884,6 +5903,10 @@ if (upgradeBtn) {
 }
 if (chatBtn) {
   chatBtn.addEventListener("click", runPlainChat);
+}
+if (themeSelect) {
+  initTheme();
+  themeSelect.addEventListener("change", () => applyTheme(themeSelect.value));
 }
 if (messageInput) {
   messageInput.addEventListener("input", updateComposerButtons);

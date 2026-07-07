@@ -12,7 +12,59 @@
   --green: #248a58;
   --amber: #b7791f;
   --red: #c2413a;
+  --green-soft: #e9f7ef;
+  --red-soft: #fff1f0;
+  --floating-panel: rgba(255, 255, 255, .94);
+  --floating-panel-hover: rgba(243, 248, 255, .98);
+  --graph-node: #f7f7fb;
+  --graph-stroke: #8a94a6;
   --shadow: 0 16px 40px rgba(23, 32, 42, 0.08);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121417;
+  --panel: #1b2026;
+  --panel-soft: #242a31;
+  --line: #343c46;
+  --line-strong: #4a5564;
+  --ink: #edf2f7;
+  --muted: #a5b1c2;
+  --accent: #7ca2ff;
+  --accent-soft: #243455;
+  --green: #63c08d;
+  --amber: #d9a64d;
+  --red: #f07b72;
+  --green-soft: #1d392b;
+  --red-soft: #41221f;
+  --floating-panel: rgba(27, 32, 38, .96);
+  --floating-panel-hover: rgba(36, 46, 60, .98);
+  --graph-node: #222933;
+  --graph-stroke: #798697;
+  --shadow: 0 18px 44px rgba(0, 0, 0, .36);
+}
+
+html[data-theme="eye"] {
+  color-scheme: light;
+  --bg: #eef4ec;
+  --panel: #fbfdf8;
+  --panel-soft: #edf5e8;
+  --line: #cfddc8;
+  --line-strong: #aebfa7;
+  --ink: #1f2d22;
+  --muted: #63725e;
+  --accent: #4c7f5d;
+  --accent-soft: #dcebdd;
+  --green: #2f7d55;
+  --amber: #9a6a23;
+  --red: #b35046;
+  --green-soft: #e2f1e5;
+  --red-soft: #f8e7e2;
+  --floating-panel: rgba(251, 253, 248, .95);
+  --floating-panel-hover: rgba(241, 248, 236, .98);
+  --graph-node: #f3f8ef;
+  --graph-stroke: #7f8f79;
+  --shadow: 0 16px 38px rgba(50, 75, 45, .12);
 }
 
 * { box-sizing: border-box; }
@@ -295,7 +347,7 @@ button, input, textarea, select { font: inherit; }
 
 .project-action-btn.success {
   border-color: rgba(36, 138, 88, .35);
-  background: #e9f7ef;
+  background: var(--green-soft);
   color: var(--green);
   font-weight: 700;
 }
@@ -398,7 +450,7 @@ button, input, textarea, select { font: inherit; }
 
 .project-progress-item.current {
   border-color: rgba(194, 65, 58, .35);
-  background: #fff1f0;
+  background: var(--red-soft);
 }
 
 .project-progress-item span {
@@ -441,7 +493,7 @@ button, input, textarea, select { font: inherit; }
 
 .project-stage-strip span.done {
   border-color: rgba(36, 138, 88, .35);
-  background: #e9f7ef;
+  background: var(--green-soft);
   color: var(--green);
   font-weight: 700;
 }
@@ -501,7 +553,7 @@ button, input, textarea, select { font: inherit; }
 
 .inventory-action-btn:hover {
   border-color: var(--accent);
-  background: #fff;
+  background: var(--panel);
 }
 
 .project-inventory-item strong {
@@ -554,7 +606,7 @@ button, input, textarea, select { font: inherit; }
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 3px 6px;
-  background: #fff;
+  background: var(--panel);
   color: var(--ink);
   font-size: 12px;
 }
@@ -1073,7 +1125,7 @@ button, input, textarea, select { font: inherit; }
   height: 34px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background-color: rgba(255, 255, 255, .94);
+  background-color: var(--floating-panel);
   box-shadow: 0 6px 16px rgba(23, 32, 42, .12);
   color: var(--accent);
   cursor: pointer;
@@ -1096,7 +1148,7 @@ button, input, textarea, select { font: inherit; }
 .graph-zoom-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background-color: rgba(243, 248, 255, .98);
+  background-color: var(--floating-panel-hover);
 }
 
 .graph-svg {
@@ -1107,7 +1159,7 @@ button, input, textarea, select { font: inherit; }
 
 .graph-link {
   fill: none;
-  stroke: #8a94a6;
+  stroke: var(--graph-stroke);
   stroke-width: 1.5;
 }
 
@@ -1130,7 +1182,7 @@ button, input, textarea, select { font: inherit; }
 }
 
 .graph-node.system .graph-node-rect {
-  fill: #f7f7fb;
+  fill: var(--graph-node);
 }
 
 .graph-node.lightweight .graph-node-rect {
@@ -1311,6 +1363,35 @@ textarea {
   color: var(--muted);
 }
 
+.theme-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.theme-control span {
+  font-weight: 700;
+}
+
+.theme-select {
+  width: 58px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 20px 5px 7px;
+}
+
+.theme-select:focus,
+.theme-select:focus-visible {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+  box-shadow: none;
+}
+
 .provider-checks {
   display: flex;
   gap: 6px;
@@ -1481,7 +1562,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--ink);
   line-height: 1.55;
   white-space: pre-wrap;
