@@ -75,6 +75,24 @@ The UI supports three project types:
 |---|
 | ![Implementation matrix](docs/images/implementation-matrix.png) |
 
+## Creation Stages And Observability
+
+The **Current stage** shown in the left project card is computed from persisted project evidence, not from chat text or the top execution bar. Novel projects are checked in order from concept and setting through world, characters, outline, plot, and prose. Short films use their own concept, character, beat-sheet, screenplay, storyboard, visual-prompt, and image-generation stages, while casual projects use lightweight document progress.
+
+![Writing current-stage flow](docs/images/writing-current-stage-flow.png)
+
+The right-side observability card separates invocation evidence into three responsibilities:
+
+- **Harness** proposes candidates from harness issues, budget warnings, routing decisions, and failed invocations. It does not automatically modify SOP rules.
+- **Trajectory** builds a read-only timeline for an `invocation_id` from events, nodes, routes, budgets, and harness results.
+- **Lessons** persist knowledge only after the user adopts a draft, then route reusable guidance to a shared or project skill store.
+
+Generating a Review Packet writes the relevant SOP, route, budget, harness, provider, artifact, and acceptance evidence into the current project's output directory. The current lesson card adopts its first draft directly, so users should inspect the source invocation and Review Packet before adoption.
+
+![Writing observability actions](docs/images/writing-observation-actions-flow.png)
+
+See [Writing Detailed Design](projects/writing/DETAILED-DESIGN.md) for the full implementation model.
+
 ## Technical Route
 
 - **Backend**: FastAPI + SSE for streaming workflow events and status updates.

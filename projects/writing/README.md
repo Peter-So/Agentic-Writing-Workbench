@@ -2,6 +2,8 @@
 
 `projects/writing` is the workspace used by the Web UI. It keeps public skills, SOP definitions, writing technique knowledge, and user projects.
 
+For the system layers, state model, storage, APIs, failure recovery, short-film visual flow, observability, and extension boundaries, see [Writing Detailed Design](DETAILED-DESIGN.md).
+
 ## Clean Export Contents
 
 - `novels/001`: empty novel project.

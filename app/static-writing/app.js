@@ -18,6 +18,7 @@ const fileEditor = document.querySelector("#fileEditor");
 const fileEditorTitle = document.querySelector("#fileEditorTitle");
 const fileEditorPath = document.querySelector("#fileEditorPath");
 const fileEditorText = document.querySelector("#fileEditorText");
+const fileImagePreview = document.querySelector("#fileImagePreview");
 const fileEditorStatus = document.querySelector("#fileEditorStatus");
 const closeFileBtn = document.querySelector("#closeFileBtn");
 const saveFileBtn = document.querySelector("#saveFileBtn");
@@ -613,6 +614,13 @@ function compactText(value, max = 28) {
   const head = Math.max(8, Math.ceil(max * 0.55));
   const tail = Math.max(6, max - head - 1);
   return `${text.slice(0, head)}…${text.slice(-tail)}`;
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function latestInvocationId() {
@@ -1656,7 +1664,7 @@ async function openProjectFlow() {
 }
 
 function canEditActiveFile() {
-  return Boolean(activeFile) && !activeFile.truncated && activeFile.editable !== false;
+  return Boolean(activeFile) && activeFile.kind !== "image" && !activeFile.truncated && activeFile.editable !== false;
 }
 
 function renderFileEditor() {
@@ -1664,6 +1672,11 @@ function renderFileEditor() {
     fileEditorTitle.textContent = "未选择文件";
     fileEditorPath.textContent = "";
     fileEditorText.value = "";
+    fileEditorText.hidden = false;
+    if (fileImagePreview) {
+      fileImagePreview.hidden = true;
+      fileImagePreview.replaceChildren();
+    }
     fileEditorStatus.textContent = "";
     saveFileBtn.disabled = true;
     if (rewriteFileBtn) rewriteFileBtn.disabled = true;
@@ -1671,8 +1684,32 @@ function renderFileEditor() {
   }
   fileEditorTitle.textContent = `${activeFile.dirty ? "* " : ""}${activeFile.name}`;
   fileEditorPath.textContent = activeFile.path;
-  fileEditorText.value = activeFile.content + (activeFile.truncated ? "\n\n[内容已截断]" : "");
-  if (activeFile.truncated) {
+  if (activeFile.kind === "image") {
+    fileEditorText.hidden = true;
+    fileEditorText.value = "";
+    if (fileImagePreview) {
+      const image = document.createElement("img");
+      image.src = activeFile.url;
+      image.alt = activeFile.name;
+      image.loading = "lazy";
+      const meta = document.createElement("div");
+      meta.className = "file-image-meta";
+      meta.textContent = `${activeFile.mime_type || "image"} · ${formatFileSize(activeFile.size || 0)}`;
+      fileImagePreview.replaceChildren(image, meta);
+      fileImagePreview.hidden = false;
+    }
+    fileEditorStatus.textContent = activeFile.message || "图片只读预览。";
+  } else {
+    fileEditorText.hidden = false;
+    if (fileImagePreview) {
+      fileImagePreview.hidden = true;
+      fileImagePreview.replaceChildren();
+    }
+    fileEditorText.value = activeFile.content + (activeFile.truncated ? "\n\n[内容已截断]" : "");
+  }
+  if (activeFile.kind === "image") {
+    // Status is set above; image previews are intentionally read-only.
+  } else if (activeFile.truncated) {
     fileEditorStatus.textContent = "内容已截断，为避免误覆盖，暂不支持保存。";
   } else if (activeFile.editable === false) {
     fileEditorStatus.textContent = activeFile.message || "框架文件受保护，不能在 Web 文件编辑器中保存。";
@@ -1862,11 +1899,15 @@ async function openFile(path) {
     activeFile = {
       path,
       name: data.name || path.split(/[\\/]/).pop(),
+      kind: data.kind || "text",
       content: data.content || "",
       savedContent: data.content || "",
       truncated: Boolean(data.truncated),
       editable: data.editable !== false,
       message: data.message || "",
+      url: data.kind === "image" ? `/api/writing/file-media?path=${encodeURIComponent(path)}` : "",
+      mime_type: data.mime_type || "",
+      size: data.size || 0,
       structure_role: data.structure_role || fileNode.structure_role || "",
       structure_label: data.structure_label || fileNode.structure_label || "",
       task: data.task || fileNode.task || "",

@@ -16,6 +16,9 @@
     "requirements.txt",
     "TRADEMARKS.md",
     "upgrade-manifest.json",
+    "projects/writing/Agentic-Writing-Workbench-Version",
+    "projects/writing/DETAILED-DESIGN.md",
+    "projects/writing/README.md",
     "projects/writing/sop-definitions/"
   ],
   "preserve": [

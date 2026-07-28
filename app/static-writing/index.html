@@ -11,7 +11,7 @@
         document.documentElement.dataset.theme = allowed.has(theme) ? theme : "light";
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260707-theme-focus" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260728-v0110-image-preview" />
   </head>
   <body>
     <main class="shell">
@@ -76,6 +76,7 @@
             </div>
           </header>
           <textarea id="fileEditorText" spellcheck="false" placeholder="从左侧选择可预览文件"></textarea>
+          <div id="fileImagePreview" class="file-image-preview" hidden></div>
           <div id="fileEditorStatus" class="muted-line"></div>
         </section>
         <section id="wikiViewer" class="wiki-viewer" hidden>
@@ -208,6 +209,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260707-theme-switcher"></script>
+    <script src="/static/app.js?v=20260728-v0110-image-preview"></script>
   </body>
 </html>

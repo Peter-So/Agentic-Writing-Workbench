@@ -898,6 +898,37 @@ button, input, textarea, select { font: inherit; }
   display: none;
 }
 
+.file-image-preview {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  justify-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+}
+
+.file-image-preview[hidden] {
+  display: none;
+}
+
+.file-image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .14);
+}
+
+.file-image-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .wiki-viewer {
   grid-row: 3;
   min-height: 0;

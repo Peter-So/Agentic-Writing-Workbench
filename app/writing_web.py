@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import mimetypes
 from pathlib import Path
 import queue
 import re
@@ -44,7 +45,9 @@ IGNORED_DIRS = {
     "ReferenceNovels",
 }
 IGNORED_REL_DIRS = {"novel-acquisition/novels"}
-PREVIEW_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py"}
+TEXT_PREVIEW_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py"}
+IMAGE_PREVIEW_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+PREVIEW_SUFFIXES = TEXT_PREVIEW_SUFFIXES | IMAGE_PREVIEW_SUFFIXES
 IGNORED_FILES = {".env", ".env.local"}
 
 app = FastAPI(title="Writing Agent UI", version="0.1.0")
@@ -933,7 +936,8 @@ def file_preview(path: str = Query(...)) -> dict[str, Any]:
     if not target.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
     policy = path_policy(target)
-    if target.suffix.lower() not in PREVIEW_SUFFIXES:
+    suffix = target.suffix.lower()
+    if suffix not in PREVIEW_SUFFIXES:
         return {
             "path": path,
             "name": target.name,
@@ -944,6 +948,22 @@ def file_preview(path: str = Query(...)) -> dict[str, Any]:
             "protected": policy["protected"],
             "policy_reason": policy["reason"],
             "message": "当前文件类型暂不支持预览。",
+        }
+    if suffix in IMAGE_PREVIEW_SUFFIXES:
+        mime_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        return {
+            "path": path,
+            "name": target.name,
+            "content": "",
+            "truncated": False,
+            "previewable": True,
+            "editable": False,
+            "protected": policy["protected"],
+            "policy_reason": policy["reason"],
+            "message": "图片文件只读预览，不支持在文件编辑器中保存或改写。",
+            "size": target.stat().st_size,
+            "kind": "image",
+            "mime_type": mime_type,
         }
     text = target.read_text(encoding="utf-8", errors="replace")
     truncated = len(text) > MAX_PREVIEW_CHARS
@@ -960,7 +980,19 @@ def file_preview(path: str = Query(...)) -> dict[str, Any]:
         "policy_reason": policy["reason"],
         "message": editable_message(target),
         "size": target.stat().st_size,
+        "kind": "text",
     }
+
+
+@app.get("/api/writing/file-media")
+def file_media(path: str = Query(...)) -> FileResponse:
+    target = safe_project_path(path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if target.suffix.lower() not in IMAGE_PREVIEW_SUFFIXES:
+        raise HTTPException(status_code=400, detail="当前文件类型不支持图片预览")
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(target, media_type=media_type, filename=target.name)
 
 
 @app.post("/api/writing/file")
@@ -969,7 +1001,7 @@ def file_save(req: FileSaveRequest) -> dict[str, Any]:
     target = safe_project_path(req.path)
     if not target.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
-    if target.suffix.lower() not in PREVIEW_SUFFIXES:
+    if target.suffix.lower() not in TEXT_PREVIEW_SUFFIXES:
         raise HTTPException(status_code=400, detail="当前文件类型不支持保存")
     if is_framework_file(target):
         raise HTTPException(status_code=403, detail=editable_message(target))

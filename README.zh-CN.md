@@ -75,6 +75,24 @@ Web UI
 |---|
 | ![落地方案矩阵](docs/images/implementation-matrix.png) |
 
+## 创作阶段与观察闭环
+
+左侧项目卡片的“当前阶段”由已落盘的项目证据计算，不由聊天内容或顶部执行流程条直接推进。小说项目按“概念 → 基础设定 → 世界观 → 人物 → 大纲 → 情节 → 正文”检查，后端在刷新 `/api/writing/status` 时把第一个未完成阶段返回给界面。电影脚本使用独立的概念、角色、节拍、剧本、分镜、生词、生图阶段链；随想项目使用轻量文档统计。
+
+![Writing 当前阶段推进流程](docs/images/writing-current-stage-flow.png)
+
+右侧观察卡片把 invocation 证据分为三种用途：
+
+- **门禁**：从 Harness、预算、路由和失败记录生成候选建议；只提建议，不自动修改 SOP 或启用新门禁。
+- **轨迹**：按 `invocation_id` 汇总事件、节点、路由、预算和 Harness 时间线；只读，不改变任务状态。
+- **经验**：用户点击“采纳首条”后才写入正式 lessons，并按通用性分流到公共或项目技能库。
+
+“生成复盘”会将 SOP、路由、预算、Harness、provider、产物和验收清单整理为 Review Packet 并写入当前项目输出目录。当前经验卡片不能先编辑草案；采纳前应先核对来源 invocation 与 Review Packet。
+
+![Writing 观察卡手动功能](docs/images/writing-observation-actions-flow.png)
+
+完整实现说明见 [Writing 详细设计](projects/writing/DETAILED-DESIGN.md)。
+
 ## 技术路线
 
 - **后端**：FastAPI + SSE，负责流式输出、状态流转和任务恢复。
