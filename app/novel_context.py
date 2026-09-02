@@ -23,6 +23,8 @@ def novel_dir(novel_id: str | None = None) -> Path:
     root = NOVELS_ROOT.resolve()
     if not str(path).startswith(str(root)):
         raise ValueError("项目路径越界")
+    from app.auth import assert_project_access
+    assert_project_access(nid)
     return path
 
 
@@ -41,8 +43,12 @@ def novel_id_from_path(path: Path) -> str:
 def list_novels() -> list[dict[str, str]]:
     if not NOVELS_ROOT.exists():
         return []
+    from app.auth import allowed_project_ids
+    allowed = allowed_project_ids()
     items: list[dict[str, str]] = []
     for path in sorted((p for p in NOVELS_ROOT.iterdir() if p.is_dir()), key=lambda p: p.name):
+        if allowed is not None and path.name not in allowed:
+            continue
         label = path.name
         kind = ""
         project_file = path / "project.yaml"

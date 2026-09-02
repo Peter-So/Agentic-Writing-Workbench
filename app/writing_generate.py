@@ -10,7 +10,7 @@ from app.writing_task_profiles import is_novel_planning_task, novel_stage_profil
 
 # 材料驱动生成：严格遵守 00-material-driven-workflow.md 的 Prompt 结构
 # [系统指令] LLM 是材料重组器，不是创作者
-# [材料区] 必须使用的材料（含 provider 答案，阶段 C 注入）
+# [材料区] 必须使用的项目材料
 # [规则区] 必须遵守的规范（spec）
 # [重组指令] 如何改造材料
 # [输出格式] 只输出可采纳正文或结构稿，材料来源只用于内部核对
@@ -29,7 +29,7 @@ def _novel_planning_output_rules(task: str | None) -> list[str]:
     common = [
         f"[阶段标识] {profile.get('label') or '小说前期规划'}（{profile.get('id') or 'planning'}）",
         "[输出格式] 输出可直接归档到项目结构文件的结构稿，不要写成章节正文。",
-        "不要在段落末尾标注 provider、五维、技法、源文档等来源标签。",
+        "不要在段落末尾标注五维、技法、源文档等来源标签。",
         "不要输出“修改建议”“优化要点”“本轮说明”“可选方案对比”，只保留用户可采纳的定稿内容。",
     ]
     if sections:
@@ -41,8 +41,7 @@ def _novel_planning_output_rules(task: str | None) -> list[str]:
     return common
 
 
-def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | None,
-                      cross_chapter: list[dict] | None = None,
+def _format_materials(materials: dict[str, Any], cross_chapter: list[dict] | None = None,
                       long_term_settings: list[dict] | None = None,
                       output_recall: list[dict] | None = None,
                       wiki_items: list[dict] | None = None,
@@ -50,7 +49,7 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
                       methodology_context: dict[str, Any] | None = None,
                       creative_preflight: dict[str, Any] | None = None,
                       creative_state: dict[str, Any] | None = None) -> str:
-    """把 materials + provider 答案 + 跨章节进展 + 长期设定 + 产出语义召回拼成材料区。"""
+    """把项目材料、跨章节进展、长期设定和产出语义召回拼成材料区。"""
     parts: list[str] = []
 
     # LLM Wiki：人工确认后的稳定规则/项目共识，权威高于普通 RAG 片段。
@@ -187,19 +186,11 @@ def _format_materials(materials: dict[str, Any], provider_answers: list[dict] | 
             lines.append(f"[五维·{book}·{dim}]\n{text}")
         parts.append("\n\n".join(lines))
 
-    # provider 答案作为前置素材（阶段 C：创作模式+AI 同开时注入），与五维并列为一类来源
-    for ans in provider_answers or []:
-        name = ans.get("name") or ans.get("provider") or "provider"
-        text = (ans.get("result") or "").strip()
-        if text:
-            parts.append(f"### 在线 AI 协同答案（交叉印证素材，去重去冲突后重组）\n[provider·{name}]\n{text[:3000]}")
-
     return "\n\n".join(parts) if parts else "（无材料，禁止凭空生成，应退回补充材料）"
 
 
 def build_generation_prompt(
     bundle: dict[str, Any],
-    provider_answers: list[dict] | None = None,
     revise_target: str = "",
     review_feedback: str = "",
 ) -> list[dict[str, str]]:
@@ -216,7 +207,7 @@ def build_generation_prompt(
     task = bundle.get("task", "prose")
 
     material_block = _format_materials(
-        materials, provider_answers, bundle.get("cross_chapter"), bundle.get("long_term_settings"),
+        materials, bundle.get("cross_chapter"), bundle.get("long_term_settings"),
         bundle.get("output_recall"), bundle.get("wiki_items"), bundle.get("project_wiki_items"),
         bundle.get("methodology_context"), bundle.get("creative_preflight"), bundle.get("creative_state"),
     )
@@ -326,7 +317,7 @@ def build_generation_prompt(
         human_sections += [
             "",
             "[输出格式] 只输出可替换/可插入的修订正文，不要解释过程。",
-            "必须围绕待改正文定位处理，不要重写整章；不要在段尾标注 provider、五维、角色、技法或源文档信息。",
+            "必须围绕待改正文定位处理，不要重写整章；不要在段尾标注五维、角色、技法或源文档信息。",
         ]
     elif project_kind == "generic":
         human_sections += [
@@ -336,7 +327,7 @@ def build_generation_prompt(
     else:
         human_sections += [
             "",
-            "[输出格式] 直接输出可采纳正文，不要输出来源标签、过程说明、provider 名称、五维维度、角色/技法/源文档尾注。",
+            "[输出格式] 直接输出可采纳正文，不要输出来源标签、过程说明、五维维度、角色/技法/源文档尾注。",
             "材料来源只作为内部核对依据；无材料支撑的内容不要写。",
         ]
     if task in {"outline", "character", "screenplay", "shot_list", "beat_sheet", "logline", "setting", "world"}:
@@ -360,7 +351,6 @@ def build_generation_prompt(
 def generate_prose(
     bundle: dict[str, Any],
     model_key: str | None = None,
-    provider_answers: list[dict] | None = None,
     revise_target: str = "",
     review_feedback: str = "",
     temperature: float = 0.7,
@@ -372,10 +362,10 @@ def generate_prose(
     """
     cfg = load_runtime_config()
     model_key = resolve_text_model(cfg, "writing", model_key)
-    messages = build_generation_prompt(bundle, provider_answers, revise_target, review_feedback)
+    messages = build_generation_prompt(bundle, revise_target, review_feedback)
     llm = create_llm(cfg, model_key, temperature=temperature, max_tokens=max_tokens)
-    # 打标记：正文生成的 token 供 SSE 流式透出（与逐篇提要/审查区分）。
-    llm = llm.with_config({"tags": ["prose_merge"]})
+    # 打标记：正文生成的 token 供 SSE 流式透出。
+    llm = llm.with_config({"tags": ["draft_generation"]})
     text = ""
     try:
         for chunk in llm.stream(messages):

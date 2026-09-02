@@ -22,7 +22,7 @@ def build_chapter_material_index(
     message: str,
     bundle: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a chapter-scoped material index for routing and provider packets.
+    """Build a chapter-scoped material index for generation packets.
 
     The index is a project Wiki artifact. It records precise chapter-facing
     material and local-only reference pointers. External providers receive only
@@ -389,7 +389,7 @@ def _technique_brief(bundle: dict[str, Any], message: str, outline: str) -> str:
 
 
 def _sanitize_kb_technique_line(line: str) -> str:
-    """Keep only beat ordinals and KB technique laws in provider output."""
+    """Keep only beat ordinals and knowledge-base technique laws in output."""
     text = re.sub(r"\s+", " ", str(line or "")).strip()
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"《[^》]+》", "", text)

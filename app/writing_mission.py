@@ -5,7 +5,7 @@ from typing import Any
 
 from app.novel_context import novel_dir, normalize_novel_id
 from app.project_kinds import project_kind
-from app.writing_invocations import cost_board, list_recent_invocations
+from app.writing_invocations import list_recent_invocations
 from app.writing_sop import sop_summary
 
 
@@ -17,7 +17,6 @@ def mission_hub(novel_id: str, limit: int = 10) -> dict[str, Any]:
     root = novel_dir(nid)
     kind = project_kind(nid)
     recent = list_recent_invocations(nid, limit=limit)
-    board = cost_board(nid, limit=20)
     artifacts = _artifact_status(root, kind)
     active_stage = _active_stage(recent, artifacts)
     return {
@@ -36,7 +35,6 @@ def mission_hub(novel_id: str, limit: int = 10) -> dict[str, Any]:
         "sop": sop_summary(kind),
         "artifacts": artifacts,
         "recent": [_mission_item(item) for item in recent],
-        "cost_summary": board.get("summary") or {},
         "blocking": _blocking_items(recent),
     }
 
@@ -106,8 +104,6 @@ def _stage_status(stage: str, active: str, recent: list[dict[str, Any]], artifac
 
 
 def _mission_item(record: dict[str, Any]) -> dict[str, Any]:
-    routes = record.get("routes") or []
-    budgets = record.get("budgets") or []
     return {
         "id": record.get("id", ""),
         "status": record.get("status", ""),
@@ -116,10 +112,7 @@ def _mission_item(record: dict[str, Any]) -> dict[str, Any]:
         "created_at": record.get("created_at", ""),
         "updated_at": record.get("updated_at", ""),
         "current_node": record.get("current_node", ""),
-        "route": routes[-1] if routes else {},
-        "budget": budgets[-1] if budgets else {},
         "trajectory_count": len(record.get("trajectory") or []),
-        "harness_count": len(record.get("harness") or []),
     }
 
 
@@ -128,9 +121,6 @@ def _blocking_items(recent: list[dict[str, Any]]) -> list[dict[str, str]]:
     for record in recent[:5]:
         if record.get("status") == "failed":
             blockers.append({"level": "error", "message": f"{record.get('id')} 执行失败", "id": record.get("id", "")})
-        for item in record.get("harness") or []:
-            if item.get("level") == "error":
-                blockers.append({"level": "error", "message": "Prompt harness 阻断", "id": record.get("id", "")})
     return blockers[:5]
 
 

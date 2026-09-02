@@ -38,13 +38,6 @@ def _structured_packet(
     record: dict[str, Any],
     sop: dict[str, Any],
 ) -> dict[str, Any]:
-    harness_issues = []
-    for item in record.get("harness") or []:
-        if not isinstance(item, dict):
-            continue
-        harness_issues.extend(item.get("issues") or (item.get("result") or {}).get("issues") or [])
-    latest_route = _latest(record.get("routes") or [])
-    latest_budget = _latest(record.get("budgets") or [])
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "novel_id": novel_id,
@@ -67,18 +60,11 @@ def _structured_packet(
             "hard_rules": [_rule_text(item) for item in sop.get("hard_rules") or []],
             "review_focus": sop.get("review_focus") or [],
         },
-        "route": latest_route,
-        "budget": latest_budget,
-        "harness_issues": harness_issues,
-        "providers": record.get("providers") or {},
         "artifacts": record.get("artifacts") or {},
-        "acceptance_checklist": _acceptance_checklist(sop, harness_issues),
+        "acceptance_checklist": _acceptance_checklist(sop),
         "timeline_counts": {
             "events": len(record.get("events") or []),
             "trajectory": len(record.get("trajectory") or []),
-            "routes": len(record.get("routes") or []),
-            "budgets": len(record.get("budgets") or []),
-            "harness": len(record.get("harness") or []),
         },
     }
 
@@ -100,39 +86,14 @@ def _packet_markdown(packet: dict[str, Any]) -> str:
     ]
     lines.extend(f"- 硬规则：{item}" for item in packet["sop"].get("hard_rules") or ["无"])
     lines.append("")
-    lines.append("## 路由与预算")
-    route = packet.get("route") or {}
-    budget = packet.get("budget") or {}
-    lines.append(f"- 路由：{route.get('decision', 'none')} / {route.get('reason', 'none')} / {route.get('boundary', '')}")
-    lines.append(f"- 预算：{budget.get('level', 'ok')} / 估算总量 {budget.get('estimated_total_tokens', 0)}")
-    lines.append("")
-    lines.append("## Harness 问题")
-    issues = packet.get("harness_issues") or []
-    if issues:
-        lines.extend(f"- [{item.get('level', 'warn')}] {item.get('code', '')}: {item.get('message', '')}" for item in issues)
-    else:
-        lines.append("- 未发现 harness 问题。")
-    lines.append("")
-    lines.append("## Provider")
-    providers = packet.get("providers") or {}
-    if providers:
-        for key, value in providers.items():
-            lines.append(f"- {value.get('name') or key}: {value.get('status', '')}, length={value.get('result_length', 0)}")
-    else:
-        lines.append("- 无 provider 记录。")
-    lines.append("")
     lines.append("## 验收清单")
     lines.extend(f"- [ ] {item}" for item in packet.get("acceptance_checklist") or [])
     return "\n".join(lines).strip() + "\n"
 
 
-def _acceptance_checklist(sop: dict[str, Any], issues: list[dict[str, Any]]) -> list[str]:
+def _acceptance_checklist(sop: dict[str, Any]) -> list[str]:
     checklist = [_rule_text(item) for item in sop.get("hard_rules") or []]
     checklist.extend(str(item) for item in sop.get("review_focus") or [])
-    for issue in issues:
-        msg = issue.get("message")
-        if msg:
-            checklist.append(f"确认已修复：{msg}")
     seen: set[str] = set()
     result: list[str] = []
     for item in checklist:
@@ -143,11 +104,6 @@ def _acceptance_checklist(sop: dict[str, Any], issues: list[dict[str, Any]]) -> 
     return result
 
 
-def _latest(items: list[Any]) -> dict[str, Any]:
-    for item in reversed(items):
-        if isinstance(item, dict):
-            return item
-    return {}
 
 
 def _rule_text(rule: Any) -> str:

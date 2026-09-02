@@ -114,7 +114,7 @@ NOVEL_STRUCTURAL_DIRS = {
     "outputs": {"path": "输出", "description": "材料包、快照、备份和生成产物。"},
     "accepted_planning": {"path": "输出/已采纳规划", "description": "用户确认后的规划类产物快照。"},
     "outline_backups": {"path": "输出/大纲备份", "description": "大纲覆盖写回前的自动备份。"},
-    "invocation_logs": {"path": "日志/调用记录", "description": "创作任务 invocation、节点轨迹、成本和 provider 日志。"},
+    "invocation_logs": {"path": "日志/调用记录", "description": "创作任务 invocation 与节点轨迹日志。"},
     "skills": {"path": "技能", "description": "项目私有技能。公共技能由类型级技能库提供。"},
     "wiki": {"path": "维基", "description": "项目级 Wiki，保存结构索引、稳定规则与项目共识。"},
     "references": {"path": "资产/参考材料", "description": "项目专用参考材料。"},

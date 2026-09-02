@@ -1,0 +1,12 @@
+[program:agentic-writing-workbench]
+directory=/home/AppsPros/svr/agentic-writing-workbench/current
+command=/home/AppsPros/svr/agentic-writing-workbench/current/deploy/vps/start-agentic-writing-workbench.sh
+user=AppsPros
+autostart=true
+autorestart=true
+startsecs=10
+stopasgroup=true
+killasgroup=true
+stdout_logfile=/home/AppsPros/svr/agentic-writing-workbench/shared/logs/app.stdout.log
+stderr_logfile=/home/AppsPros/svr/agentic-writing-workbench/shared/logs/app.stderr.log
+environment=PYTHONUNBUFFERED="1"

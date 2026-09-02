@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import ROOT
-from app.novel_context import WRITING_ROOT, novel_dir, normalize_novel_id
+from app.novel_context import NOVELS_ROOT, WRITING_ROOT, novel_dir, normalize_novel_id
 from app.project_kinds import assemble_generic_bundle, ensure_project_initialized, project_kind
 from app.project_paths import assets_dir, outputs_dir, project_dir, skills_dir, storyboards_dir
 
@@ -115,10 +115,15 @@ def _json_from_stdout(stdout: str) -> Any:
 
 
 def _rel(path: Path) -> str:
+    resolved = path.resolve()
     try:
-        return str(path.relative_to(ROOT)).replace("\\", "/")
+        return str(resolved.relative_to(ROOT.resolve())).replace("\\", "/")
     except ValueError:
-        return str(path)
+        try:
+            novel_rel = resolved.relative_to(NOVELS_ROOT.resolve())
+            return (Path("projects/writing/novels") / novel_rel).as_posix()
+        except ValueError:
+            return str(resolved)
 
 
 def build_semantic_index(novel_id: str | None = None) -> dict[str, Any]:
@@ -127,7 +132,7 @@ def build_semantic_index(novel_id: str | None = None) -> dict[str, Any]:
     index_path = NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl"
     return {
         "ok": True,
-        "index_path": str(index_path.relative_to(ROOT)).replace("\\", "/"),
+        "index_path": _rel(index_path),
         "index_exists": index_path.exists(),
         "size": index_path.stat().st_size if index_path.exists() else 0,
         "log": result.stdout.strip(),
@@ -449,7 +454,7 @@ def assemble_material(chapter: int | None, query: str, task: str = "prose",
         "novel_id": nid,
         "task": task,
         "chapter": chapter,
-        "output_path": str(output.relative_to(ROOT)).replace("\\", "/"),
+        "output_path": _rel(output),
         "bundle": data,
         "log": result.stdout.strip(),
         "cached": False,
@@ -999,7 +1004,7 @@ def _short_film_progress(novel_path: Path) -> dict[str, Any]:
     stages = []
     for key, label, path, min_chars, placeholders in checks:
         done = _is_meaningful_file(path, placeholders, min_chars=min_chars)
-        stages.append({"key": key, "label": label, "done": done, "path": str(path.relative_to(ROOT)).replace("\\", "/") if path.exists() else ""})
+        stages.append({"key": key, "label": label, "done": done, "path": _rel(path) if path.exists() else ""})
     storyboards = storyboards_dir(novel_path.name)
     manifest = storyboards / "visual_prompt_manifest.json"
     prompt_done = manifest.exists() and manifest.stat().st_size > 20
@@ -1012,7 +1017,7 @@ def _short_film_progress(novel_path: Path) -> dict[str, Any]:
             )
     image_done = bool(image_files)
     stages.extend([
-        {"key": "visual_prompts", "label": "生词", "done": prompt_done, "path": str(manifest.relative_to(ROOT)).replace("\\", "/") if manifest.exists() else ""},
+        {"key": "visual_prompts", "label": "生词", "done": prompt_done, "path": _rel(manifest) if manifest.exists() else ""},
         {"key": "images", "label": "生图", "done": image_done, "count": len(image_files)},
     ])
     done_count = sum(1 for item in stages if item.get("done"))
@@ -1086,8 +1091,8 @@ def _reference_novel_count() -> dict[str, Any]:
         "listed_count": listed_count,
         "extracted_count": extracted_count,
         "raw_count": raw_count,
-        "reference_dir": str(reference_dir.relative_to(ROOT)).replace("\\", "/") if reference_dir.exists() else "",
-        "source": str(novel_list.relative_to(ROOT)).replace("\\", "/") if novel_list.exists() else "",
+        "reference_dir": _rel(reference_dir) if reference_dir.exists() else "",
+        "source": _rel(novel_list) if novel_list.exists() else "",
     }
 
 
@@ -1193,13 +1198,13 @@ def project_status(novel_id: str | None = None) -> dict[str, Any]:
         "novel": nid,
         "project_kind": kind,
         "project_init": init,
-        "novel_path": str(novel_path.relative_to(ROOT)).replace("\\", "/"),
+        "novel_path": _rel(novel_path),
         "writing_root": str(WRITING_ROOT),
         "semantic_index_ready": (NOVEL_ACQ_DIR / "cache" / "tfidf_index.pkl").exists(),
         "project_progress": project_progress(nid),
         "project_inventory": project_inventory(nid),
         "chapters": [
-            {"chapter": idx + 1, "name": path.name, "path": str(path.relative_to(ROOT)).replace("\\", "/")}
+            {"chapter": idx + 1, "name": path.name, "path": _rel(path)}
             for idx, path in enumerate(sorted(project_dir(nid, "chapters").glob("chapter-*.md")))
         ],
     }

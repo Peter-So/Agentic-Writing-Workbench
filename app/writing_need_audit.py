@@ -36,7 +36,6 @@ def audit_need(
     project_kind: str | None,
     task: str | None,
     chapter: int | None = None,
-    use_provider_source: bool = False,
 ) -> dict[str, Any]:
     """Deterministic Need Audit before material assembly.
 
@@ -70,7 +69,6 @@ def audit_need(
         _audit_novel(text, selected_task, chapter, missing, risks)
 
     has_blocker = any(item["severity"] == "blocker" for item in risks)
-    provider_recommended = bool(use_provider_source and suggested_task in {"logline", "character", "beat_sheet", "screenplay", "prose", "outline"})
     return {
         "ok": not has_blocker,
         "level": "error" if has_blocker else ("warn" if risks else "ok"),
@@ -79,7 +77,6 @@ def audit_need(
         "suggested_task": suggested_task,
         "deliverable": _DELIVERABLE_HINTS.get(suggested_task or selected_task, suggested_task or selected_task or "未识别"),
         "chapter": chapter,
-        "provider_recommended": provider_recommended,
         "risks": risks,
         "missing": missing,
         "intent_cards": _intent_cards(text, suggested_task or selected_task),

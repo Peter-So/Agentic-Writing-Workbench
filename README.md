@@ -6,7 +6,9 @@
 
 Agentic Writing Workbench is a local-first creative writing workbench for long-form projects. It turns an open-ended writing request into an auditable workflow: understand intent, route by project structure, assemble precise materials, generate or collect candidates, review, ask for human confirmation, and only then write back to project files.
 
-It is built with FastAPI, LangGraph, LangChain-compatible model clients, optional browser-based AI providers, project Wiki, recoverable task state, and reusable writing skill libraries.
+The workbench uses same-origin HttpOnly sessions. `/admin` provides lightweight user, role, menu, and role-permission management. Regular users can access only assigned writing projects; super administrators can manage all projects.
+
+It is built with FastAPI, LangGraph, LangChain-compatible model clients, project Wiki, recoverable task state, and reusable writing skill libraries.
 
 ![Architecture overview](docs/images/architecture-overview.png)
 
@@ -14,7 +16,6 @@ It is built with FastAPI, LangGraph, LangChain-compatible model clients, optiona
 
 - Creative projects lose context across long conversations, files, and revisions.
 - LLMs often answer from incomplete or irrelevant material.
-- Browser AI providers are useful but difficult to coordinate, compare, and archive.
 - Generated text should not silently overwrite outlines, chapters, scripts, or project rules.
 - Reference novels, writing techniques, project memory, and review criteria need a repeatable way to enter the workflow.
 
@@ -26,10 +27,6 @@ This workbench treats writing as a controlled production pipeline, not a one-sho
 |---|---|
 | ![Writing cockpit](docs/images/ui-writing.jpg) | ![Project Wiki](docs/images/ui-project-wiki.jpg) |
 
-| Provider collection | Diagnostics |
-|---|---|
-| ![Provider chat](docs/images/ui-provider-chat.jpg) | ![Diagnostics](docs/images/ui-diagnostics.jpg) |
-
 | Project types | Prose creation |
 |---|---|
 | ![Project types](docs/images/ui-project-types.jpg) | ![Prose creation](docs/images/ui-prose-creation.png) |
@@ -39,9 +36,9 @@ This workbench treats writing as a controlled production pipeline, not a one-sho
 - **Project structure first**: every project owns a `维基/project-structure.json` map. Routing and archive logic should read structure before guessing paths.
 - **Intent before execution**: user requests first go through intent analysis, then enter the right workflow node.
 - **Material precision**: prompts are assembled from relevant chapter, character, plot, style, memory, reference, and technique material instead of dumping whole files.
-- **Human confirmation gate**: generated drafts, provider materials, file rewrites, and archive actions require explicit user confirmation.
-- **Recoverable workflows**: pending tasks, stage timing, provider results, and confirmation states can be restored after refresh or restart.
-- **Local ownership**: keys, browser sessions, private novels, generated outputs, logs, and memories stay local and are ignored by Git.
+- **Human confirmation gate**: generated drafts, file rewrites, and archive actions require explicit user confirmation.
+- **Recoverable workflows**: pending tasks, stage timing, and confirmation states can be restored after refresh or restart.
+- **Local ownership**: keys, private novels, generated outputs, logs, and memories stay local and are ignored by Git.
 
 ## Overall Framework
 
@@ -51,8 +48,8 @@ Web UI
   -> LangGraph writing workflow
   -> Project Wiki + SOP + pending intent memory
   -> Material assembly + RAG/five-dimension/reference retrieval
-  -> Local LLM roles and optional browser providers
-  -> Review, merge, finalization
+  -> API-backed LLM roles
+  -> Generation, review, finalization
   -> Human confirmation
   -> Archive/writeback + memory/wiki update
 ```
@@ -83,11 +80,11 @@ The **Current stage** shown in the left project card is computed from persisted 
 
 The right-side observability card separates invocation evidence into three responsibilities:
 
-- **Harness** proposes candidates from harness issues, budget warnings, routing decisions, and failed invocations. It does not automatically modify SOP rules.
-- **Trajectory** builds a read-only timeline for an `invocation_id` from events, nodes, routes, budgets, and harness results.
+- **Tasks** show recent invocation status and node progress.
+- **Trajectory** builds a read-only timeline for an `invocation_id` from events and nodes.
 - **Lessons** persist knowledge only after the user adopts a draft, then route reusable guidance to a shared or project skill store.
 
-Generating a Review Packet writes the relevant SOP, route, budget, harness, provider, artifact, and acceptance evidence into the current project's output directory. The current lesson card adopts its first draft directly, so users should inspect the source invocation and Review Packet before adoption.
+Generating a Review Packet writes the relevant SOP, artifact, and acceptance evidence into the current project's output directory. The current lesson card adopts its first draft directly, so users should inspect the source invocation and Review Packet before adoption.
 
 ![Writing observability actions](docs/images/writing-observation-actions-flow.png)
 
@@ -96,9 +93,8 @@ See [Writing Detailed Design](projects/writing/DETAILED-DESIGN.md) for the full 
 ## Technical Route
 
 - **Backend**: FastAPI + SSE for streaming workflow events and status updates.
-- **Workflow engine**: LangGraph StateGraph for intent analysis, routing, material assembly, provider fanout, review, finalization, and archive.
+- **Workflow engine**: LangGraph StateGraph for intent analysis, routing, material assembly, generation, review, finalization, and archive.
 - **Model layer**: OpenAI-compatible text/image model registry configured through `.env.shared`.
-- **Provider layer**: optional Playwright browser automation for web AI providers, with user confirmation before fusion.
 - **Memory and recovery**: pending intent memory, invocation logs, project Wiki, and workflow status snapshots.
 - **Knowledge layer**: project Wiki, LLM Wiki, writing technique knowledge, public skill suites, optional Chroma/Embedding sidecars, and local TF-IDF fallback.
 - **Frontend**: static HTML/CSS/JS workbench with project cards, file tree, read-only Wiki viewer, model selectors, task status timeline, and confirmation controls.
@@ -120,14 +116,13 @@ scripts/upgrade-to-latest.py
 scripts/publish-release.py
 ```
 
-The clean export does not include private keys, provider sessions, browser profiles, reference novels, Chroma data, task logs, generated outputs, or project-specific content.
+The clean export does not include private keys, reference novels, Chroma data, task logs, generated outputs, or project-specific content.
 
 ## Quick Start
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
 Copy-Item .env.shared.example .env.shared
 notepad .env.shared
 .\.venv\Scripts\python.exe -m uvicorn app.writing_web:app --host 127.0.0.1 --port 7861
@@ -145,7 +140,7 @@ More details: [QUICK-START.md](QUICK-START.md).
 
 In the Web UI, click **Update** in the top-right toolbar to check the latest GitHub Release. The page shows the release notes and asks for confirmation before upgrading. After confirmation, the backend downloads the release, creates a backup, updates framework files, restarts the service, and the browser waits for the service to come back.
 
-Before upgrading, the backend checks active provider jobs, unfinished writing invocations, and recoverable pending intents. If any task is still running or waiting for confirmation/archive, the upgrade is blocked until the task is completed, archived, rejected, or otherwise cleared.
+Before upgrading, the backend checks unfinished writing invocations and recoverable pending intents. If any task is still running or waiting for confirmation/archive, the upgrade is blocked until the task is completed, archived, rejected, or otherwise cleared.
 
 Upgrade to the latest GitHub release:
 
@@ -209,6 +204,8 @@ Preview without pushing:
 - `IMAGE_LLM_ROLE_IMAGE`: default image model.
 
 Image defaults are `16:9`, `1K`, and `1536x1024`. Fill in your own endpoints and keys locally.
+
+The top-bar **Check connectivity** action calls `/api/writing/models/check`, sends a minimal request to each registered text model, and displays health and latency without exposing API keys. When only one text model is configured, the chat, writing, and review roles should all reference it.
 
 ## Optional Vector Sidecar
 

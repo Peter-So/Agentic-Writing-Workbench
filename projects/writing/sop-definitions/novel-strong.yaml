@@ -1,7 +1,7 @@
 id: novel_001
 project_kind: novel_strong
 label: 小说强规范创作 SOP
-default_mode: parallel_collect_then_serial_merge
+default_mode: serial_generate
 roles:
   story_architect:
     label: 故事架构师
@@ -22,8 +22,8 @@ tasks:
   character:
     stage: 角色设计
     role: character_designer
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 人物必须有明确欲望、阻碍、外显行为和语言特征。
       - 不能只给标签化性格，必须给可写入正文的动作/对白样例。
@@ -33,8 +33,8 @@ tasks:
   outline:
     stage: 大纲搭建
     role: story_architect
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 大纲必须包含事件因果、压力升级、转折和章末钩子。
       - 不得只输出主题总结或设定罗列。
@@ -44,8 +44,8 @@ tasks:
   beat_sheet:
     stage: 情节节拍
     role: story_architect
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 每个节拍必须有场景、人物行动、阻力、变化和余味。
       - 节拍之间必须存在因果推进。
@@ -55,8 +55,8 @@ tasks:
   prose:
     stage: 正文生成
     role: prose_writer
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 正文必须场景化，避免段尾升华、心理机制命名和空洞总结。
       - 重要段落必须能追溯到大纲、人物或已确认材料。
@@ -67,8 +67,8 @@ tasks:
   expansion:
     stage: 扩写
     role: prose_writer
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 扩写必须保留原场景目标，不得改写主线事实。
       - 必须增加动作、感官、对白或阻力，而不是堆形容词。

@@ -1,7 +1,7 @@
 id: generic
 project_kind: generic
 label: 通用创作 SOP
-default_mode: parallel_collect_then_serial_merge
+default_mode: serial_generate
 roles:
   planner:
     label: 结构规划
@@ -16,8 +16,8 @@ tasks:
   outline:
     stage: 结构规划
     role: planner
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 输出必须有层次、目标和下一步可执行内容。
     review_focus:
@@ -25,8 +25,8 @@ tasks:
   materials:
     stage: 材料整理
     role: planner
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 必须区分已知材料、推断内容和待确认问题。
     review_focus:
@@ -34,8 +34,8 @@ tasks:
   draft:
     stage: 草稿生成
     role: drafter
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 必须基于项目材料和用户要求输出可编辑草稿。
     review_focus:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from time import perf_counter
+
 from langchain_openai import ChatOpenAI
 
 from app.config import ModelConfig, RuntimeConfig
@@ -108,3 +111,52 @@ def available_image_models(config: RuntimeConfig) -> list[dict[str, str]]:
         for key, spec in config.image_models.items()
         if spec.ready
     ]
+
+
+def check_text_model_connectivity(
+    config: RuntimeConfig,
+    model_key: str,
+    *,
+    timeout: float = 30.0,
+) -> dict[str, object]:
+    """Run a minimal real request without exposing credentials."""
+    started = perf_counter()
+    checked_at = datetime.now().isoformat(timespec="seconds")
+    spec = config.models.get(model_key)
+    base: dict[str, object] = {
+        "key": model_key,
+        "name": spec.name if spec else model_key,
+        "model": spec.model if spec else "",
+        "checked_at": checked_at,
+    }
+    if spec is None:
+        return {**base, "ok": False, "latency_ms": 0, "error": "模型未注册"}
+    if not spec.ready:
+        return {**base, "ok": False, "latency_ms": 0, "error": "API key 或模型配置不完整"}
+    try:
+        llm = create_llm(
+            config,
+            model_key,
+            temperature=0,
+            max_tokens=8,
+            timeout=timeout,
+            max_retries=0,
+        )
+        response = llm.invoke([{"role": "user", "content": "只回复 OK"}])
+        content = str(getattr(response, "content", "") or "").strip()
+        return {
+            **base,
+            "ok": True,
+            "latency_ms": round((perf_counter() - started) * 1000),
+            "response_preview": content[:40],
+        }
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
+        if spec.api_key is not None:
+            message = message.replace(spec.api_key.get_secret_value(), "***")
+        return {
+            **base,
+            "ok": False,
+            "latency_ms": round((perf_counter() - started) * 1000),
+            "error": message[:500],
+        }

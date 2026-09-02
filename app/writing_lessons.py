@@ -127,16 +127,9 @@ def suggest_lesson_from_invocation(novel_id: str, invocation_id: str) -> dict[st
 
 
 def suggest_lesson_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    issues = []
-    for item in record.get("harness") or []:
-        if not isinstance(item, dict):
-            continue
-        issues.extend(item.get("issues") or (item.get("result") or {}).get("issues") or [])
-    latest_route = _latest(record.get("routes") or [])
-    latest_budget = _latest(record.get("budgets") or [])
-    if not issues and record.get("status") not in {"failed", "awaiting_confirm"} and latest_budget.get("level") not in {"warn", "error"}:
+    if record.get("status") != "failed":
         return None
-    title = _lesson_title(record, issues, latest_route, latest_budget)
+    title = f"{record.get('task', 'task')} invocation failure"
     return {
         "id": f"LL-DRAFT-{record.get('id', '')}",
         "title": title,
@@ -144,20 +137,15 @@ def suggest_lesson_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "task": record.get("task", ""),
         "trigger": {
             "status": record.get("status", ""),
-            "harness_issue_codes": [item.get("code", "") for item in issues],
-            "route_reason": latest_route.get("reason", ""),
-            "budget_level": latest_budget.get("level", "ok"),
+            "current_node": record.get("current_node", ""),
         },
-        "draft_markdown": _draft_markdown(record, title, issues, latest_route, latest_budget),
+        "draft_markdown": _draft_markdown(record, title),
     }
 
 
 def _draft_markdown(
     record: dict[str, Any],
     title: str,
-    issues: list[dict[str, Any]],
-    route: dict[str, Any],
-    budget: dict[str, Any],
 ) -> str:
     lines = [
         f"# {title}",
@@ -167,10 +155,8 @@ def _draft_markdown(
         f"- 状态：{record.get('status', '')}",
         "",
         "## 触发条件",
-        f"- 路由：{route.get('decision', '')} / {route.get('reason', '')}",
-        f"- 预算：{budget.get('level', 'ok')} / {budget.get('estimated_total_tokens', 0)}",
+        f"- 失败节点：{record.get('current_node', '')}",
     ]
-    lines.extend(f"- Harness：{item.get('code', '')} - {item.get('message', '')}" for item in issues)
     lines.extend([
         "",
         "## 可复用经验",
@@ -178,26 +164,9 @@ def _draft_markdown(
         "",
         "## 下次执行前检查",
         "- 是否需要新增 SOP predicate 或 prompt assembler 约束。",
-        "- 是否应缩小 fanout 信息边界。",
+        "- 是否需要补充材料、恢复信息或错误处理。",
     ])
     return "\n".join(lines).strip() + "\n"
-
-
-def _lesson_title(record: dict[str, Any], issues: list[dict[str, Any]], route: dict[str, Any], budget: dict[str, Any]) -> str:
-    if issues:
-        return f"{record.get('task', 'task')} harness failure: {issues[0].get('code', 'issue')}"
-    if budget.get("level") in {"warn", "error"}:
-        return f"{record.get('task', 'task')} budget guard lesson"
-    if route.get("reason"):
-        return f"{record.get('task', 'task')} route lesson: {route.get('reason')}"
-    return f"{record.get('task', 'task')} invocation lesson"
-
-
-def _latest(items: list[Any]) -> dict[str, Any]:
-    for item in reversed(items):
-        if isinstance(item, dict):
-            return item
-    return {}
 
 
 def _title(text: str, fallback: str) -> str:

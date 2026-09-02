@@ -7,22 +7,27 @@ from pathlib import Path
 import queue
 import re
 import shutil
+import sqlite3
 import threading
 import time
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.ai_provider_bridge import provider_status, run_provider_fanout, start_provider_job
-from app.ai_provider_jobs import jobs
-from app.ai_web_bridge import bridge
+from app.auth import (
+    AuthMiddleware, COOKIE_NAME, assert_project_access, assign_project_owner, create_user as auth_create_user,
+    current_user, has_admin_access, init_auth_db, list_menus as auth_list_menus, list_roles as auth_list_roles,
+    list_project_owners, list_users as auth_list_users, login as auth_login, logout as auth_logout,
+    remove_project_owner, require_permission, role_permissions, save_menu, save_role,
+    session_user, set_project_owner, update_user as auth_update_user,
+)
 from app.chat_history import append_message, load_before, load_by_track, load_recent, soft_delete_project_messages, update_message
 from app.config import ROOT, load_runtime_config
-from app.llm_client import available_image_models, available_models, create_llm, resolve_text_model
-from app.novel_context import DEFAULT_NOVEL_ID, WRITING_ROOT, list_novels, novel_dir, novel_id_from_path, normalize_novel_id
+from app.llm_client import available_image_models, available_models, check_text_model_connectivity, create_llm, resolve_text_model
+from app.novel_context import DEFAULT_NOVEL_ID, NOVELS_ROOT, WRITING_ROOT, list_novels, novel_dir, novel_id_from_path, normalize_novel_id
 from app.writing_agent import WritingAgent
 from app.writing_file_policy import editable_message, is_framework_file, path_policy
 from app.writing_tools import WritingToolError, project_status
@@ -51,7 +56,21 @@ PREVIEW_SUFFIXES = TEXT_PREVIEW_SUFFIXES | IMAGE_PREVIEW_SUFFIXES
 IGNORED_FILES = {".env", ".env.local"}
 
 app = FastAPI(title="Writing Agent UI", version="0.1.0")
+init_auth_db()
+app.add_middleware(AuthMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def web_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        try:
+            novel_rel = resolved.relative_to(NOVELS_ROOT.resolve())
+            return (Path("projects/writing/novels") / novel_rel).as_posix()
+        except ValueError:
+            return str(resolved)
 
 
 class WritingChatRequest(BaseModel):
@@ -62,9 +81,6 @@ class WritingChatRequest(BaseModel):
     dimension: str | None = None
     top_k: int = Field(default=8, ge=1, le=20)
     attachments: list[str] = Field(default_factory=list)
-    login_confirmed: dict[str, bool] = Field(default_factory=dict)
-    use_provider_source: bool = False
-    skip_material_assemble: bool = False
     track: str = Field(default="normal")
     novel_id: str = Field(default=DEFAULT_NOVEL_ID)
     model_preferences: dict[str, str] = Field(default_factory=dict)
@@ -85,14 +101,14 @@ class PlainChatRequest(BaseModel):
     model_preferences: dict[str, str] = Field(default_factory=dict)
 
 
-class AIProviderRunRequest(BaseModel):
-    message: str = Field(..., min_length=1)
-    mode: str = Field(default="search")
-    chapter: int | None = None
-    attachments: list[str] = Field(default_factory=list)
-    login_confirmed: dict[str, bool] = Field(default_factory=dict)
-    format_for_writing: bool = False
-    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=80)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class ModelConnectivityRequest(BaseModel):
+    model_keys: list[str] = Field(default_factory=list)
+    timeout: float = Field(default=30.0, ge=5.0, le=120.0)
 
 
 class NeedAuditRequest(BaseModel):
@@ -100,7 +116,6 @@ class NeedAuditRequest(BaseModel):
     task: str = Field(default="prose")
     chapter: int | None = None
     novel_id: str = Field(default=DEFAULT_NOVEL_ID)
-    use_provider_source: bool = False
 
 
 class PendingWorkflowStatusRequest(BaseModel):
@@ -561,27 +576,6 @@ class ArchiveOutlineRequest(BaseModel):
     invocation_id: str = Field(default="")
 
 
-class ConfirmedProviderAnswer(BaseModel):
-    provider: str = Field(default="")
-    name: str = Field(default="")
-    status: str = Field(default="success")
-    result: str = Field(default="")
-    files: list[str] = Field(default_factory=list)
-    edited: bool = False
-    original_result: str = Field(default="")
-
-
-class ProviderConfirmRequest(BaseModel):
-    answers: list[ConfirmedProviderAnswer] = Field(default_factory=list)
-    chapter: int | None = None
-    task: str = Field(default="prose")
-    track: str = Field(default="create")
-    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
-    checkpoint_id: str = Field(default="")
-    invocation_id: str = Field(default="")
-    model_preferences: dict[str, str] = Field(default_factory=dict)
-
-
 class VisualPromptRequest(BaseModel):
     task: str = Field(default="screenplay")
     content: str = Field(default="")
@@ -649,6 +643,114 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/admin")
+def admin_index(request: Request):
+    user = session_user(request.cookies.get(COOKIE_NAME))
+    if user and not has_admin_access(user):
+        return RedirectResponse(url="/", status_code=302)
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.post("/api/auth/login")
+def auth_login_endpoint(req: LoginRequest, request: Request) -> JSONResponse:
+    result = auth_login(req.username, req.password)
+    if not result:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token, user = result
+    response = JSONResponse({"ok": True, "user": user})
+    secure = (request.headers.get("x-forwarded-proto") or request.url.scheme) == "https"
+    response.set_cookie(COOKIE_NAME, token, httponly=True, secure=secure, samesite="lax", max_age=12 * 3600, path="/")
+    return response
+
+
+@app.get("/api/auth/session")
+def auth_session_endpoint(request: Request) -> dict[str, Any]:
+    user = session_user(request.cookies.get(COOKIE_NAME))
+    projects = list_novels() if user else []
+    return {"ok": True, "authenticated": bool(user), "user": user, "projects": projects}
+
+
+@app.post("/api/auth/logout")
+def auth_logout_endpoint(request: Request) -> JSONResponse:
+    auth_logout(request.cookies.get(COOKIE_NAME))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/admin/users")
+def admin_users() -> dict[str, Any]:
+    return {"ok": True, "items": auth_list_users()}
+
+
+@app.post("/api/admin/users")
+def admin_user_create(payload: dict[str, Any]) -> dict[str, Any]:
+    try: return auth_create_user(payload)
+    except (ValueError, sqlite3.IntegrityError) as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/admin/users/{user_id}")
+def admin_user_update(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    try: return auth_update_user(user_id, payload)
+    except KeyError as exc: raise HTTPException(404, "用户不存在") from exc
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/admin/projects")
+def admin_projects() -> dict[str, Any]:
+    return {"ok": True, "items": list_project_owners()}
+
+
+@app.put("/api/admin/projects/{novel_id}/owner")
+def admin_project_owner(novel_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try: return set_project_owner(normalize_novel_id(novel_id), int(payload.get("user_id")))
+    except KeyError as exc: raise HTTPException(404, "项目不存在") from exc
+    except (TypeError, ValueError) as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/admin/roles")
+def admin_roles() -> dict[str, Any]:
+    return {"ok": True, "items": auth_list_roles()}
+
+
+@app.post("/api/admin/roles")
+def admin_role_create(payload: dict[str, Any]) -> dict[str, Any]:
+    try: return save_role(payload)
+    except (ValueError, sqlite3.IntegrityError) as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/admin/roles/{role_id}")
+def admin_role_update(role_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return save_role(payload, role_id)
+
+
+@app.get("/api/admin/menus")
+def admin_menus() -> dict[str, Any]:
+    return {"ok": True, "items": auth_list_menus()}
+
+
+@app.post("/api/admin/menus")
+def admin_menu_create(payload: dict[str, Any]) -> dict[str, Any]:
+    try: return save_menu(payload)
+    except (ValueError, sqlite3.IntegrityError) as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/admin/menus/{menu_id}")
+def admin_menu_update(menu_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return save_menu(payload, menu_id)
+
+
+@app.get("/api/admin/roles/{role_id}/permissions")
+def admin_role_permissions(role_id: int) -> dict[str, Any]:
+    return role_permissions(role_id)
+
+
+@app.put("/api/admin/roles/{role_id}/permissions")
+def admin_role_permissions_update(role_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    try: return role_permissions(role_id, [int(x) for x in payload.get("menu_ids") or []])
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+
+
 
 class AppUpgradeRequest(BaseModel):
     host: str = Field(default="127.0.0.1")
@@ -703,22 +805,17 @@ def status(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
     except Exception:
         data["workflow_sop"] = {}
     try:
-        from app.writing_invocations import cost_board, list_recent_invocations
+        from app.writing_invocations import list_recent_invocations
         from app.writing_mission import mission_hub
 
         recent = list_recent_invocations(nid, limit=1)
-        board = cost_board(nid, limit=20)
         mission = mission_hub(nid, limit=5)
-        cost_summary = board.get("summary") or {}
         if recent:
             latest = recent[0]
             data["collaboration"] = {
                 "latest_invocation_id": latest.get("id", ""),
                 "latest_status": latest.get("status", ""),
                 "trajectory_count": len(latest.get("trajectory") or []),
-                "harness_count": len(latest.get("harness") or []),
-                "budget_count": len(latest.get("budgets") or []),
-                "cost_summary": cost_summary,
                 "mission_stage": mission.get("active_stage", ""),
             }
         else:
@@ -726,9 +823,6 @@ def status(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
                 "latest_invocation_id": "",
                 "latest_status": "empty",
                 "trajectory_count": 0,
-                "harness_count": 0,
-                "budget_count": 0,
-                "cost_summary": cost_summary,
                 "mission_stage": mission.get("active_stage", ""),
             }
     except Exception:
@@ -856,6 +950,21 @@ def writing_models() -> dict[str, Any]:
     }
 
 
+@app.post("/api/writing/models/check")
+def writing_models_check(req: ModelConnectivityRequest) -> dict[str, Any]:
+    runtime = load_runtime_config()
+    keys = list(dict.fromkeys(req.model_keys or list(runtime.models)))
+    results = [
+        check_text_model_connectivity(runtime, key, timeout=req.timeout)
+        for key in keys
+    ]
+    return {
+        "ok": bool(results) and all(bool(item.get("ok")) for item in results),
+        "results": results,
+        "checked": len(results),
+    }
+
+
 @app.get("/api/writing/sop")
 def writing_sop_endpoint(
     novel_id: str = Query(DEFAULT_NOVEL_ID),
@@ -908,7 +1017,6 @@ def writing_need_audit(req: NeedAuditRequest) -> dict[str, Any]:
         project_kind=project_kind(nid),
         task=req.task,
         chapter=req.chapter,
-        use_provider_source=req.use_provider_source,
     )}
 
 
@@ -924,9 +1032,12 @@ def files(novel_id: str | None = Query(None)) -> dict[str, Any]:
     if novel_id:
         nid = normalize_novel_id(novel_id)
         root = novel_dir(nid)
-        tree = build_file_tree(WRITING_ROOT, str(root.relative_to(WRITING_ROOT)).replace("\\", "/"))
+        tree = build_file_tree(WRITING_ROOT, f"novels/{nid}")
         annotate_file_tree_with_structure(tree, nid)
         return {"root": tree, "novel_id": nid, "scope": "novel"}
+    user = current_user() or {}
+    if not user.get("is_superuser"):
+        raise HTTPException(status_code=403, detail="普通用户必须指定自己的项目")
     return {"root": build_file_tree(WRITING_ROOT), "scope": "writing"}
 
 
@@ -1046,41 +1157,13 @@ def file_update_reject(req: PendingUpdateRequest) -> dict[str, Any]:
     return reject_pending_update(req.id)
 
 
-def read_provider_answer_file(path: str) -> str:
-    rel = Path(path.replace("\\", "/"))
-    if rel.is_absolute() or ".." in rel.parts:
-        return ""
-    target = (ROOT / rel).resolve()
-    writing_root = WRITING_ROOT.resolve()
-    if not str(target).startswith(str(writing_root)) or not target.is_file():
-        return ""
-    suffix = target.suffix.lower()
-    if suffix in {".txt", ".md", ".json"}:
-        return target.read_text(encoding="utf-8", errors="replace")[:80_000]
-    if suffix == ".docx":
-        try:
-            import re as _re
-            import zipfile
-            import xml.etree.ElementTree as ET
-
-            with zipfile.ZipFile(target) as zf:
-                xml = zf.read("word/document.xml")
-            root = ET.fromstring(xml)
-            texts = [node.text or "" for node in root.iter() if node.tag.endswith("}t")]
-            return _re.sub(r"\n{3,}", "\n\n", "\n".join(texts)).strip()[:80_000]
-        except Exception:
-            return ""
-    return ""
-
-
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB 上传上限，防磁盘溢出
-
-
 @app.post("/api/writing/upload")
 async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    user = current_user() or {}
+    user_upload_dir = UPLOAD_DIR / str(user.get("id") or "anonymous")
+    user_upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename or "upload.bin").name
-    target = UPLOAD_DIR / safe_name
+    target = user_upload_dir / safe_name
     written = 0
     try:
         with target.open("wb") as out:
@@ -1101,7 +1184,7 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"上传失败：{exc}")
     return {
         "name": safe_name,
-        "path": str(target.relative_to(ROOT)).replace("\\", "/"),
+        "path": web_path(target),
         "content_type": file.content_type,
         "size": target.stat().st_size,
     }
@@ -1309,49 +1392,9 @@ def reference_workbench_publish(req: ReferencePublishRequest) -> dict[str, Any]:
     target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     return {
         "ok": True,
-        "path": str(target.relative_to(ROOT)).replace("\\", "/"),
+        "path": web_path(target),
         "message": "参考小说工作台报告已发布到项目输出目录。",
     }
-
-
-@app.get("/api/ai-providers/status")
-def ai_provider_status() -> dict[str, Any]:
-    return provider_status()
-
-
-@app.post("/api/ai-providers/run")
-async def ai_provider_run(req: AIProviderRunRequest) -> dict[str, Any]:
-    return await run_provider_fanout(
-        message=req.message,
-        mode=req.mode,
-        chapter=req.chapter,
-        attachments=req.attachments,
-        login_confirmed=req.login_confirmed,
-        format_for_writing=req.format_for_writing,
-        novel_id=req.novel_id,
-    )
-
-
-@app.post("/api/ai-providers/run-async")
-async def ai_provider_run_async(req: AIProviderRunRequest) -> dict[str, Any]:
-    """后台启动协同任务，立即返回 job_id；前端轮询 job 状态展示实时进度。"""
-    return start_provider_job(
-        message=req.message,
-        mode=req.mode,
-        chapter=req.chapter,
-        attachments=req.attachments,
-        login_confirmed=req.login_confirmed,
-        format_for_writing=req.format_for_writing,
-        novel_id=req.novel_id,
-    )
-
-
-@app.get("/api/ai-providers/job/{job_id}")
-def ai_provider_job(job_id: str) -> dict[str, Any]:
-    job = jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="任务不存在或已过期")
-    return job.snapshot()
 
 
 @app.get("/api/writing/invocation/{invocation_id}")
@@ -1389,26 +1432,6 @@ def writing_invocation(invocation_id: str, novel_id: str = Query(DEFAULT_NOVEL_I
         except Exception:
             pass
     return {"ok": True, "invocation": data}
-
-
-@app.get("/api/writing/cost-board")
-def writing_cost_board(
-    novel_id: str = Query(DEFAULT_NOVEL_ID),
-    limit: int = Query(20, ge=1, le=100),
-) -> dict[str, Any]:
-    from app.writing_invocations import cost_board
-
-    return cost_board(novel_id, limit=limit)
-
-
-@app.get("/api/writing/harness-suggestions")
-def writing_harness_suggestions(
-    novel_id: str = Query(DEFAULT_NOVEL_ID),
-    limit: int = Query(20, ge=1, le=100),
-) -> dict[str, Any]:
-    from app.writing_auto_harness import harness_suggestions
-
-    return harness_suggestions(novel_id, limit=limit)
 
 
 @app.get("/api/writing/trajectory/{invocation_id}")
@@ -1650,6 +1673,7 @@ def writing_skills(
 @app.get("/api/chat/history")
 def chat_history(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
     """加载最新最多 100 条对话记录（重启/刷新不丢失）。"""
+    assert_project_access(novel_id)
     return _clean_chat_history(load_recent(novel_id))
 
 
@@ -1657,18 +1681,21 @@ def chat_history(novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
 def chat_history_before(seq: int = Query(..., ge=1), limit: int = Query(20, ge=1, le=100),
                         novel_id: str = Query(DEFAULT_NOVEL_ID)) -> dict[str, Any]:
     """向上滚动时加载 seq 之前的历史记录，每次最多 20 条。"""
+    assert_project_access(novel_id)
     return _clean_chat_history(load_before(seq, limit, novel_id))
 
 
 @app.post("/api/chat/log")
 def chat_log(req: ChatLogRequest) -> dict[str, Any]:
-    """持久化一条对话消息（用户输入、助手回复、provider 结果卡片等），按 track 区分创作/普通。"""
+    """持久化一条对话消息（用户输入、助手回复、生成结果等），按 track 区分创作/普通。"""
+    assert_project_access(req.novel_id)
     return append_message(_clean_chat_message(req.model_dump()))
 
 
 @app.post("/api/chat/log/update")
 def chat_log_update(req: ChatLogUpdateRequest) -> dict[str, Any]:
-    """覆盖一条已有对话消息，用于 provider 卡片编辑态刷新恢复。"""
+    """覆盖一条已有对话消息，用于可编辑结果刷新恢复。"""
+    assert_project_access(req.novel_id)
     payload = req.model_dump()
     seq = int(payload.pop("seq"))
     return update_message(seq, payload.get("novel_id"), _clean_chat_message(payload))
@@ -1718,9 +1745,19 @@ def create_writing_project(req: ProjectCreateRequest) -> dict[str, Any]:
     kind = type_map.get(req.project_type)
     if not kind:
         raise HTTPException(status_code=400, detail="项目类型不支持")
+    physical_target = NOVELS_ROOT / project_id
+    if physical_target.exists():
+        novel_dir(project_id)
+        raise HTTPException(status_code=409, detail="项目已存在")
+    assign_project_owner(project_id)
     from app.project_kinds import create_project
-    result = create_project(project_id, kind)
+    try:
+        result = create_project(project_id, kind)
+    except Exception:
+        remove_project_owner(project_id)
+        raise
     if result.get("exists"):
+        remove_project_owner(project_id)
         raise HTTPException(status_code=409, detail=result.get("message", "项目已存在"))
     append_message({
         "role": "system",
@@ -1757,6 +1794,7 @@ def delete_writing_project(project_id: str, req: ProjectDeleteRequest | None = N
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"项目移动到回收区失败：{exc}")
     chat_result = soft_delete_project_messages(nid, WRITING_ROOT / ".trash" / "chat_history")
+    remove_project_owner(nid)
     novels = list_novels()
     next_novel = novels[0]["id"] if novels else ""
     return {
@@ -2369,346 +2407,6 @@ def archive_outline_endpoint(req: ArchiveOutlineRequest) -> dict[str, Any]:
     return result
 
 
-@app.post("/api/writing/provider-confirm")
-def provider_confirm(req: ProviderConfirmRequest) -> dict[str, Any]:
-    """用户确认/编辑 provider 材料后，继续融合与审查流程。"""
-    return _provider_confirm_impl(req)
-
-
-@app.post("/api/writing/provider-confirm-stream")
-def provider_confirm_stream(req: ProviderConfirmRequest) -> StreamingResponse:
-    """用户确认 provider 材料后，用 SSE 透出融合/审查的状态流转。"""
-    def events():
-        q: queue.Queue[tuple[str, Any]] = queue.Queue()
-        done_marker = object()
-        stages = stage_preset("provider_confirm")
-        done: list[str] = []
-
-        def progress(data: dict[str, Any]) -> None:
-            stage = str(data.get("stage") or "")
-            status = str(data.get("status") or "running")
-            if stage:
-                if status == "done" and stage not in done:
-                    done.append(stage)
-                save_pending_workflow_snapshot(
-                    novel_id=req.novel_id,
-                    track=req.track,
-                    invocation_id=req.invocation_id,
-                    stages=stages,
-                    current=stage,
-                    done=done,
-                    status=status,
-                    task=req.task,
-                    chapter=req.chapter,
-                    source="provider_confirm_stream",
-                )
-            q.put(("progress", data))
-
-        def token(text: str) -> None:
-            if text:
-                q.put(("token", {"text": text}))
-
-        def run() -> None:
-            try:
-                result = _provider_confirm_impl(req, progress=progress, token=token)
-                q.put(("done", result))
-            except Exception as exc:
-                q.put(("error", {"message": f"{type(exc).__name__}: {exc}"}))
-            finally:
-                q.put(("_closed", done_marker))
-
-        threading.Thread(target=run, daemon=True).start()
-        while True:
-            event, data = q.get()
-            if data is done_marker:
-                break
-            yield _web_sse(event, data)
-
-    return StreamingResponse(events(), media_type="text/event-stream")
-
-
-def _provider_confirm_progress(progress, stage: str, label: str, status: str = "running", **details: Any) -> None:
-    if not progress:
-        return
-    progress({
-        "stage": stage,
-        "label": label,
-        "status": status,
-        "at": time.time(),
-        "details": {key: value for key, value in details.items() if value not in (None, "", [], {})},
-    })
-
-
-def _confirmed_provider_answers(req: ProviderConfirmRequest) -> list[dict[str, Any]]:
-    confirmed: list[dict[str, Any]] = []
-    for item in req.answers:
-        text = (item.result or "").strip()
-        file_parts: list[str] = []
-        for file_path in item.files or []:
-            file_text = read_provider_answer_file(file_path)
-            if file_text:
-                file_parts.append(f"### {Path(file_path).name}\n{file_text}")
-        if file_parts:
-            text = "\n\n".join(filter(None, [
-                text,
-                "## 用户上传的 provider 回答文件材料",
-                "\n\n".join(file_parts),
-            ])).strip()
-        if text:
-            original = (item.original_result or "").strip()
-            confirmed.append({
-                "provider": item.provider,
-                "name": item.name or item.provider,
-                "status": item.status or "success",
-                "result": text,
-                "files": item.files,
-                "edited": bool(item.edited) or (bool(original) and original != text),
-                "original_chars": len(original),
-                "confirmed_chars": len(text),
-            })
-    return confirmed
-
-
-def _provider_confirm_impl(req: ProviderConfirmRequest, progress=None, token=None) -> dict[str, Any]:
-    """用户确认/编辑 provider 材料后，继续融合与审查流程。"""
-    nid = normalize_novel_id(req.novel_id)
-    _provider_confirm_progress(progress, "provider_confirm_gate", "确认材料", "running")
-    confirmed = _confirmed_provider_answers(req)
-    if not confirmed:
-        raise HTTPException(status_code=400, detail="请至少确认一个 provider 回答或上传可读取的回答文件")
-    _provider_confirm_progress(progress, "provider_confirm_gate", "确认材料", "done", answers=len(confirmed))
-
-    try:
-        from app.intervene_policy import policy_view
-        from app.project_kinds import project_kind
-        from app.writing_graph import GRAPH_RECURSION_LIMIT, get_graph
-        from app.writing_invocations import append_event, finish_invocation, invocation_rel_path
-        from app.writing_sop import sop_for_task
-        from app.writing_memory import thread_id_for
-        from langgraph.types import Command
-
-        graph = get_graph()
-        thread_id = thread_id_for(req.track, nid)
-        graph_cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": GRAPH_RECURSION_LIMIT}
-        if req.checkpoint_id:
-            graph_cfg["configurable"]["checkpoint_id"] = req.checkpoint_id
-        snapshot = graph.get_state(graph_cfg)
-        vals = snapshot.values or {}
-        kind = vals.get("project_kind") or project_kind(nid)
-        bundle = vals.get("bundle") or {
-            "task": req.task,
-            "chapter": req.chapter,
-            "novel_id": nid,
-            "project_kind": kind,
-            "materials": {},
-            "spec": "",
-        }
-        bundle["novel_id"] = nid
-        bundle["project_kind"] = bundle.get("project_kind") or kind
-        bundle["model_preferences"] = req.model_preferences
-        request_analysis = (
-            vals.get("request_analysis")
-            or bundle.get("request_analysis")
-            or (vals.get("data") or {}).get("request_analysis")
-            or {}
-        )
-        effective_task = req.task or vals.get("task") or bundle.get("task") or "prose"
-        if effective_task in {"", "generic", "draft"} and isinstance(request_analysis, dict):
-            effective_task = request_analysis.get("task") or request_analysis.get("canonical_task") or effective_task
-        effective_chapter = req.chapter or vals.get("chapter") or bundle.get("chapter")
-        if not effective_chapter and isinstance(request_analysis, dict):
-            effective_chapter = request_analysis.get("target_chapter") or request_analysis.get("chapter")
-        try:
-            effective_chapter = int(effective_chapter) if effective_chapter else None
-        except Exception:
-            effective_chapter = None
-        bundle["task"] = effective_task
-        if effective_chapter:
-            bundle["chapter"] = effective_chapter
-        if request_analysis and not bundle.get("request_analysis"):
-            bundle["request_analysis"] = request_analysis
-        workflow_sop = vals.get("workflow_sop") or bundle.get("workflow_sop") or sop_for_task(kind, effective_task)
-        bundle["workflow_sop"] = workflow_sop
-        actions = list(vals.get("actions") or [])
-        actions.append("provider_confirm(user)")
-        invocation_id = req.invocation_id or vals.get("invocation_id") or ""
-        append_event(
-            nid,
-            invocation_id,
-            "provider_material_confirmed",
-            "用户确认 provider 材料",
-            node="provider_confirm_gate",
-            status="running",
-            details={
-                "answers": len(confirmed),
-                "edited_answers": sum(1 for item in confirmed if item.get("edited")),
-                "confirmed_chars": sum(len(item.get("result") or "") for item in confirmed),
-                "checkpoint_id": req.checkpoint_id,
-                "sop_stage": workflow_sop.get("stage"),
-                "role": workflow_sop.get("role_label"),
-                "mode": workflow_sop.get("mode"),
-            },
-            artifacts={"confirmed_provider_answers": confirmed},
-        )
-
-        update = {
-            "draft": "",
-            "bundle": bundle,
-            "project_kind": kind,
-            "workflow_sop": workflow_sop,
-            "task": effective_task,
-            "chapter": effective_chapter,
-            "provider_answers": confirmed,
-            "merge_info": {},
-            "pre_review": {},
-            "model_review": {},
-            "awaiting_provider_confirm": False,
-            "provider_failed": False,
-            "invocation_id": invocation_id,
-            "model_preferences": req.model_preferences,
-            "iterations": 0,
-            "actions": actions,
-            "data": {},
-        }
-
-        # Resume the real LangGraph path from the human confirmation gate:
-        # confirmed provider materials -> generate -> pre_review conditional edge
-        # -> model_review conditional edge -> draft_finalize. This preserves
-        # review loop behavior instead of manually calling the review nodes here.
-        append_event(
-            nid,
-            invocation_id,
-            "graph_resume",
-            "从用户确认点恢复到 generate",
-            node="generate",
-            status="running",
-            details={"thread_id": thread_id},
-        )
-        for event in graph.stream(
-            Command(update=update, goto="generate"),
-            config=graph_cfg,
-            stream_mode=["messages", "updates", "custom"],
-        ):
-            mode = "updates"
-            payload = event
-            if isinstance(event, tuple) and len(event) == 2:
-                mode, payload = event
-            if mode == "messages":
-                chunk, meta = payload
-                tags = (meta or {}).get("tags") or []
-                text = getattr(chunk, "content", "") or ""
-                if "prose_merge" in tags and text and token:
-                    token(text)
-            elif mode == "custom":
-                if isinstance(payload, dict) and payload.get("type") == "stage":
-                    stage = str(payload.get("stage") or "")
-                    status = str(payload.get("status") or "running")
-                    label_map = {
-                        "provider_consensus": "共识归纳",
-                        "provider_digest": "逐篇多维评分",
-                        "provider_merge": "融合生成",
-                    }
-                    label = label_map.get(stage) or STAGE_LABELS.get(stage, stage)
-                    details = {k: v for k, v in payload.items() if k not in {"type", "stage", "status"}}
-                    append_event(
-                        nid,
-                        invocation_id,
-                        "provider_stage",
-                        f"{label}{'完成' if status == 'done' else '进行中'}",
-                        node=stage,
-                        status=status,
-                        details=details,
-                    )
-                    _provider_confirm_progress(progress, stage, label, status, **details)
-            elif mode == "updates":
-                for node in (payload or {}).keys():
-                    append_event(
-                        nid,
-                        invocation_id,
-                        "graph_node_completed",
-                        f"{node} 完成",
-                        node=node,
-                        status="running",
-                    )
-                    labels = {
-                        "generate": "生成融合稿",
-                        "pre_review": "预审查",
-                        "model_review": "模型审查",
-                        "draft_finalize": "定稿返回",
-                    }
-                    if node in labels:
-                        _provider_confirm_progress(progress, node, labels[node], "done")
-
-        latest = graph.get_state({"configurable": {"thread_id": thread_id}})
-        final = latest.values or {}
-        data = dict(final.get("data") or {})
-        if not data:
-            data = {
-                "draft": final.get("draft", ""),
-                "provider_answers": final.get("provider_answers") or confirmed,
-                "merge_info": final.get("merge_info") or {},
-                "pre_review": final.get("pre_review") or {},
-                "model_review": final.get("model_review") or {},
-                "review_strategy": final.get("review_strategy") or {},
-                "iterations": final.get("iterations", 0),
-                "provider_failed": bool(final.get("provider_failed")),
-                "artifacts": {},
-                "project_kind": final.get("project_kind") or kind,
-            }
-        final_analysis = data.get("request_analysis") or final.get("request_analysis") or request_analysis or {}
-        data["request_analysis"] = final_analysis
-        data_task = data.get("task") or effective_task
-        if data_task in {"", "generic", "draft"} and isinstance(final_analysis, dict):
-            data_task = final_analysis.get("task") or final_analysis.get("canonical_task") or data_task
-        data["task"] = data_task
-        data["chapter"] = data.get("chapter") or effective_chapter
-        data["policy"] = policy_view(req.track, data["task"])
-        data["project_kind"] = data.get("project_kind") or kind
-        data["invocation_id"] = invocation_id
-        data["invocation_log"] = invocation_rel_path(nid, invocation_id) if invocation_id else ""
-        data["workflow_sop"] = final.get("workflow_sop") or workflow_sop
-        draft = data.get("draft") or final.get("draft", "")
-        try:
-            from app.final_text_cleaner import clean_final_draft
-
-            draft = clean_final_draft(draft, task=data["task"], project_kind=kind)
-            data["draft"] = draft
-        except Exception:
-            pass
-        finish_invocation(
-            nid,
-            invocation_id,
-            status="awaiting_confirm" if draft else "failed",
-            label="等待用户确认采纳" if draft else "用户确认材料后融合失败",
-            details={
-                "task": data["task"],
-                "chapter": data.get("chapter"),
-                "actions": final.get("actions") or actions,
-                "draft_length": len(draft),
-            },
-            artifacts={
-                "invocation_log": data.get("invocation_log", ""),
-                "draft": draft,
-                "draft_length": len(draft),
-                "task": data["task"],
-                "chapter": data.get("chapter"),
-                "project_kind": data.get("project_kind") or kind,
-            },
-        )
-        data["cleanup"] = _cleanup_after_success(nid, "provider_confirm")
-        return {
-            "ok": True,
-            "answer": draft,
-            "intent": final.get("intent", "draft"),
-            "actions": final.get("actions") or actions,
-            "data": data,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-
-
 @app.post("/api/writing/visual-prompts-stream")
 def visual_prompts_stream(req: VisualPromptRequest) -> StreamingResponse:
     """短片确认脚本后：生成每个节拍的场景、人物、三视图和分镜帧生图提示词。"""
@@ -2754,50 +2452,15 @@ def writing_stats(track: str = Query("create")) -> dict[str, Any]:
     return all_stats(track)
 
 
-class FallbackGenerateRequest(BaseModel):
-    message: str = Field(default="")
-    chapter: int | None = None
-    task: str = Field(default="prose")
-    track: str = Field(default="create")
-    novel_id: str = Field(default=DEFAULT_NOVEL_ID)
-    model_preferences: dict[str, str] = Field(default_factory=dict)
-
-
-@app.post("/api/writing/fallback-generate")
-def fallback_generate(req: FallbackGenerateRequest) -> dict[str, Any]:
-    """provider 全失败时的兜底：用 API 模型(claude)做材料驱动生成，用户确认后调用。"""
-    from app.writing_generate import generate_prose
-    from app.writing_tools import assemble_material
-    try:
-        data = assemble_material(chapter=req.chapter, query=req.message or req.task, task=req.task, novel_id=req.novel_id)
-        bundle = data.get("bundle") or {}
-        out = generate_prose(bundle, model_key=req.model_preferences.get("writing"))
-        return {"ok": out.get("ok", False), "model": out.get("model"),
-                "draft": out.get("text", ""), "task": req.task, "chapter": req.chapter}
-    except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-
-
 @app.get("/api/chat/history/track/{track}")
 def chat_history_track(track: str, limit: int = Query(0, ge=0, le=1000),
                        novel_id: str | None = Query(None)) -> dict[str, Any]:
     """按模式（create/normal）加载对话记录，供后续创作流程学习/优化使用。"""
+    if novel_id:
+        assert_project_access(novel_id)
+    elif not (current_user() or {}).get("is_superuser"):
+        raise HTTPException(status_code=403, detail="普通用户必须指定自己的项目")
     return load_by_track(track, limit, novel_id)
-
-
-@app.post("/api/ai-providers/{provider_id}/open")
-async def ai_provider_open(provider_id: str) -> dict[str, Any]:
-    return await bridge.open_provider(provider_id)
-
-
-@app.post("/api/ai-providers/{provider_id}/pin")
-async def ai_provider_pin(provider_id: str) -> dict[str, Any]:
-    return await bridge.pin_current_conversation(provider_id)
-
-
-@app.post("/api/ai-providers/{provider_id}/reset-conversation")
-async def ai_provider_reset_conversation(provider_id: str) -> dict[str, Any]:
-    return bridge.reset_conversation(provider_id)
 
 
 def _ready_chat_model(preferred: str = "gpt") -> str:
@@ -2815,6 +2478,7 @@ def _required_message_text(message: str, *, action: str = "提交") -> str:
 @app.post("/api/writing/plain-chat")
 def plain_chat(req: PlainChatRequest) -> dict[str, Any]:
     """Pure chat: no LangGraph nodes, no material assembly, no project writeback."""
+    assert_project_access(req.novel_id)
     message = _required_message_text(req.message, action="聊天")
     try:
         model_key = _ready_chat_model(req.model_key or req.model_preferences.get("chat", ""))
@@ -2853,8 +2517,6 @@ def chat(req: WritingChatRequest) -> WritingChatResponse:
             task=req.task,
             dimension=req.dimension,
             top_k=req.top_k,
-            login_confirmed=req.login_confirmed,
-            use_provider_source=req.use_provider_source,
             track=req.track,
             novel_id=req.novel_id,
             model_preferences=req.model_preferences,
@@ -2900,8 +2562,6 @@ def draft_stream(req: WritingChatRequest) -> StreamingResponse:
     inputs = {
         "user_message": message, "mode": req.mode, "chapter": req.chapter,
         "task": req.task, "dimension": req.dimension, "top_k": req.top_k,
-        "login_confirmed": req.login_confirmed, "use_provider_source": req.use_provider_source,
-        "skip_material_assemble": req.skip_material_assemble,
         "track": req.track, "novel_id": req.novel_id,
         "model_preferences": req.model_preferences,
     }
@@ -2919,12 +2579,18 @@ def safe_project_path(path: str) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         raise HTTPException(status_code=400, detail="非法路径")
     target = (WRITING_ROOT / rel).resolve()
-    root = WRITING_ROOT.resolve()
-    try:
-        target.relative_to(root)
-    except ValueError:
+    roots = (WRITING_ROOT.resolve(), NOVELS_ROOT.resolve())
+    if not any(_is_relative_to(target, root) for root in roots):
         raise HTTPException(status_code=400, detail="路径不在 writing 项目内")
     return target
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def build_file_tree(root: Path, rel: str = "") -> dict[str, Any]:
@@ -2968,7 +2634,7 @@ def annotate_file_tree_with_structure(tree: dict[str, Any], novel_id: str) -> No
     except Exception:
         return
     try:
-        project_root = str(novel_dir(novel_id).relative_to(WRITING_ROOT)).replace("\\", "/")
+        project_root = f"novels/{normalize_novel_id(novel_id)}"
         docs = (load_project_structure(novel_id).get("documents") or {})
     except Exception:
         return

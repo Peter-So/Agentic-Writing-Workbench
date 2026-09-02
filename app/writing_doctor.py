@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
-from app.ai_providers import PROVIDERS
-from app.ai_web_bridge import CAPTURE_LOG, PROFILE_ROOT, SESSION_STORE
 from app.config import ROOT, RuntimeConfig, load_runtime_config
 from app.novel_context import WRITING_ROOT, novel_dir, normalize_novel_id
 from app.project_paths import logs_invocations_dir, project_dir, skills_dir, wiki_dir as project_wiki_dir
@@ -16,7 +13,7 @@ from app.writing_sop import SOP_ROOT, sop_summary
 
 
 def run_writing_doctor(novel_id: str | None = None) -> dict[str, Any]:
-    """Read-only runtime/provider diagnostics for the writing cockpit."""
+    """Read-only runtime diagnostics for the writing cockpit."""
     nid = normalize_novel_id(novel_id)
     checks: list[dict[str, Any]] = []
     checks.extend(_runtime_checks())
@@ -26,7 +23,6 @@ def run_writing_doctor(novel_id: str | None = None) -> dict[str, Any]:
     checks.extend(_memory_checks(nid))
     checks.extend(_governance_eval_checks(nid))
     checks.extend(_collaboration_checks(nid))
-    checks.extend(_provider_checks())
     checks = _sort_checks_by_priority(checks)
     counts = {
         "ok": sum(1 for item in checks if item["level"] == "ok"),
@@ -40,40 +36,11 @@ def run_writing_doctor(novel_id: str | None = None) -> dict[str, Any]:
         "novel_id": nid,
         "summary": counts,
         "checks": checks,
-        "providers": _provider_matrix(),
     }
 
 
 def _runtime_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
-    checks.append(_check(
-        "runtime",
-        "Playwright Python 包",
-        "ok" if importlib.util.find_spec("playwright") else "error",
-        "已安装，可使用网页 provider 自动化。" if importlib.util.find_spec("playwright") else "未安装 playwright，provider 自动化不可用。",
-        hint="运行 .\\.venv\\Scripts\\python.exe -m pip install playwright 并安装 chromium。",
-    ))
-    checks.append(_check(
-        "runtime",
-        "浏览器 profile 根目录",
-        "ok" if PROFILE_ROOT.exists() else "warn",
-        _rel(PROFILE_ROOT) if PROFILE_ROOT.exists() else f"目录不存在：{_rel(PROFILE_ROOT)}",
-        hint="首次打开 provider 后会自动创建；若一直不存在，检查 data 目录权限。",
-    ))
-    checks.append(_check(
-        "runtime",
-        "固定会话文件",
-        "ok" if SESSION_STORE.exists() else "warn",
-        _rel(SESSION_STORE) if SESSION_STORE.exists() else "尚未固定任何 provider 会话。",
-        hint="在 Web 中打开 provider 并点击“固定会话”，可减少发到新会话或空白页的概率。",
-    ))
-    checks.append(_check(
-        "runtime",
-        "抓取诊断日志",
-        "ok" if CAPTURE_LOG.exists() else "warn",
-        _rel(CAPTURE_LOG) if CAPTURE_LOG.exists() else "尚未产生 provider 抓取日志。",
-        hint="provider 抓空/复制失败时查看 logs/capture_debug.log。",
-    ))
     try:
         cfg = load_runtime_config()
         checks.append(_llm_config_check(cfg))
@@ -94,7 +61,8 @@ def _llm_config_check(cfg: RuntimeConfig) -> dict[str, Any]:
     image_total = len(cfg.image_models)
     image_ready = sum(1 for item in cfg.image_models.values() if item.ready)
     role_messages: list[str] = []
-    issues: list[str] = []
+    text_issues: list[str] = []
+    image_issues: list[str] = []
 
     for role, label in [("chat", "聊天"), ("writing", "创作"), ("review", "审查")]:
         key = (cfg.model_roles.get(role) or "").strip()
@@ -102,21 +70,22 @@ def _llm_config_check(cfg: RuntimeConfig) -> dict[str, Any]:
         if spec and spec.ready:
             role_messages.append(f"{label}:{key}/{spec.model}")
         else:
-            issues.append(f"{label}模型不可用({key or '未选择'})")
+            text_issues.append(f"{label}模型不可用({key or '未选择'})")
 
     image_key = (cfg.model_roles.get("image") or "").strip()
     image_spec = cfg.image_models.get(image_key)
     if image_spec and image_spec.ready:
         role_messages.append(f"生图:{image_key}/{image_spec.model}")
     else:
-        issues.append(f"生图模型不可用({image_key or '未选择'})")
+        image_issues.append(f"生图模型不可用({image_key or '未选择'})")
 
     if text_ready <= 0:
-        issues.append("文本模型无可用配置")
+        text_issues.append("文本模型无可用配置")
     if image_ready <= 0:
-        issues.append("生图模型无可用配置")
+        image_issues.append("生图模型无可用配置")
 
-    level = "error" if issues else "ok"
+    level = "error" if text_issues else ("warn" if image_issues else "ok")
+    issues = [*text_issues, *image_issues]
     message = (
         f"文本模型 {text_ready}/{text_total} 可用，生图模型 {image_ready}/{image_total} 可用。"
         + (" " + "；".join(role_messages) if role_messages else "")
@@ -315,16 +284,9 @@ _CHECK_PRIORITY: dict[str, int] = {
     "TF-IDF 资料索引": 130,
     "本地 RAG 产出语料": 140,
     "记忆治理": 150,
-    "信息边界路由": 160,
     "最近任务 trajectory": 170,
-    "Prompt harness": 180,
-    "Token 预算观测": 190,
     "创作回放 benchmark": 200,
     "invocation 日志目录": 220,
-    "Playwright Python 包": 230,
-    "浏览器 profile 根目录": 240,
-    "固定会话文件": 250,
-    "抓取诊断日志": 260,
 }
 
 _AREA_PRIORITY: dict[str, int] = {
@@ -333,7 +295,6 @@ _AREA_PRIORITY: dict[str, int] = {
     "memory": 500,
     "collaboration": 600,
     "runtime": 700,
-    "provider": 800,
 }
 
 _LEVEL_PRIORITY = {"error": 0, "warn": 1, "ok": 2}
@@ -350,8 +311,6 @@ def _sort_checks_by_priority(checks: list[dict[str, Any]]) -> list[dict[str, Any
         priority = _CHECK_PRIORITY.get(name)
         if priority is None:
             priority = _AREA_PRIORITY.get(area, 900)
-            if area == "provider":
-                priority += 10
         level = _LEVEL_PRIORITY.get(str(check.get("level") or "warn"), 1)
         return (priority, level, idx)
 
@@ -576,7 +535,7 @@ def _governance_eval_checks(novel_id: str) -> list[dict[str, Any]]:
             "创作回放 benchmark",
             "warn" if failed else "ok",
             f"最近 {summary.get('records', 0)} 个任务：passed {summary.get('passed', 0)} / failed {failed}。",
-            hint="用于修改 harness/SOP/skills 后做横向回放对比，不调用模型。",
+            hint="用于修改 SOP/skills 后做横向回放对比，不调用模型。",
         ))
     except Exception as exc:
         checks.append(_check("collaboration", "创作回放 benchmark", "warn", f"检查失败：{type(exc).__name__}: {exc}"))
@@ -602,7 +561,7 @@ def _collaboration_checks(novel_id: str) -> list[dict[str, Any]]:
             "协作轨迹",
             "warn",
             "尚未产生可复盘的 trajectory。",
-            hint="运行一次创作流后会写入 trajectory / harness / budgets。",
+            hint="运行一次创作流后会写入 trajectory。",
         )]
 
     latest = recent[0]
@@ -616,110 +575,7 @@ def _collaboration_checks(novel_id: str) -> list[dict[str, Any]]:
         hint="trajectory 只存节点摘要、长度和 hash，不保存大段正文。",
     ))
 
-    harness_items = [item for record in recent for item in (record.get("harness") or [])]
-    harness_errors = [item for item in harness_items if item.get("level") == "error"]
-    harness_warns = [item for item in harness_items if item.get("level") == "warn"]
-    checks.append(_check(
-        "collaboration",
-        "Prompt harness",
-        "error" if harness_errors else ("warn" if harness_warns else "ok"),
-        f"最近 {len(recent)} 次任务：error {len(harness_errors)} / warn {len(harness_warns)}。",
-        hint="若出现 error，provider 提问包会被本地阻断，避免错误 prompt 进入网页 AI。",
-    ))
-
-    budgets = [item for record in recent for item in (record.get("budgets") or [])]
-    budget_errors = [item for item in budgets if item.get("level") == "error"]
-    budget_warns = [item for item in budgets if item.get("level") == "warn"]
-    if budgets:
-        latest_budget = budgets[-1]
-        msg = (
-            f"最近估算 total={latest_budget.get('estimated_total_tokens', 0)} tokens，"
-            f"prompt={latest_budget.get('prompt_tokens_est', 0)}，"
-            f"providers={latest_budget.get('provider_count', 0)}。"
-        )
-    else:
-        msg = "最近任务尚无预算记录。"
-    checks.append(_check(
-        "collaboration",
-        "Token 预算观测",
-        "error" if budget_errors else ("warn" if budget_warns or not budgets else "ok"),
-        msg,
-        hint="预算为近似估算，用于发现 prompt 过大或 provider fanout 过宽，不等同于账单。",
-    ))
-    try:
-        from app.writing_invocations import cost_board
-
-        board = cost_board(novel_id, limit=20)
-        summary = board.get("summary") or {}
-        checks.append(_check(
-            "collaboration",
-            "信息边界路由",
-            "ok",
-            (
-                f"最近 {summary.get('invocations', 0)} 次："
-                f"fanout {summary.get('fanout_routes', 0)} / "
-                f"单 Agent {summary.get('single_agent_routes', 0)}；"
-                f"provider 调用 {summary.get('provider_runs', 0)} 次。"
-            ),
-            hint="fanout 应主要出现在材料征集/关键分歧；修复和串行转化默认走单 Agent 快速路径。",
-        ))
-    except Exception:
-        pass
     return checks
-
-
-def _provider_checks() -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
-    pinned = _load_pinned()
-    for provider in PROVIDERS:
-        pid = provider["id"]
-        profile = PROFILE_ROOT / pid
-        has_profile = profile.exists() and any(profile.iterdir()) if profile.exists() else False
-        has_pinned = bool(pinned.get(pid))
-        if has_profile and has_pinned:
-            level = "ok"
-            message = "profile 与固定会话均存在。"
-            hint = ""
-        elif has_profile:
-            level = "warn"
-            message = "已有浏览器 profile，但未固定会话。"
-            hint = "建议打开该 provider 并固定当前会话，避免发送到新会话首页。"
-        else:
-            level = "warn"
-            message = "尚未发现有效浏览器 profile。"
-            hint = "点击 provider 的“打开”，完成登录后再回来运行 Doctor。"
-        checks.append(_check("provider", provider["name"], level, message, hint=hint, provider=pid))
-    return checks
-
-
-def _provider_matrix() -> list[dict[str, Any]]:
-    pinned = _load_pinned()
-    rows = []
-    for provider in PROVIDERS:
-        pid = provider["id"]
-        profile = PROFILE_ROOT / pid
-        rows.append({
-            "id": pid,
-            "name": provider["name"],
-            "url": provider["url"],
-            "automation": provider.get("automation", ""),
-            "embed_status": provider.get("embed_status", ""),
-            "profile": _rel(profile),
-            "profile_exists": profile.exists(),
-            "profile_nonempty": bool(profile.exists() and any(profile.iterdir())),
-            "pinned_conversation": pinned.get(pid, ""),
-        })
-    return rows
-
-
-def _load_pinned() -> dict[str, str]:
-    try:
-        import json
-
-        data = json.loads(SESSION_STORE.read_text(encoding="utf-8"))
-        return {k: v for k, v in data.items() if isinstance(v, str) and v}
-    except Exception:
-        return {}
 
 
 def _read_text(path: Path) -> str:
@@ -748,7 +604,6 @@ def _check(
     message: str,
     *,
     hint: str = "",
-    provider: str = "",
 ) -> dict[str, Any]:
     return {
         "area": area,
@@ -756,7 +611,6 @@ def _check(
         "level": level,
         "message": message,
         "hint": hint,
-        "provider": provider,
     }
 
 

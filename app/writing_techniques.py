@@ -117,7 +117,7 @@ def format_technique_context(lines: list[str], *, project_kind: str = "", task: 
 def recall_technique_laws(query: str, *, limit: int = 5) -> list[str]:
     """Recall abstract writing technique laws for prompt construction.
 
-    This returns provider-safe expression laws, not source excerpts. It is used
+    This returns source-safe expression laws, not source excerpts. It is used
     as a knowledge-base layer below project-specific outline/reference hints.
     """
     kb = load_technique_knowledge()

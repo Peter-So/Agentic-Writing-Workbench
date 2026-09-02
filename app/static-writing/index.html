@@ -11,9 +11,19 @@
         document.documentElement.dataset.theme = allowed.has(theme) ? theme : "light";
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260728-v0110-image-preview" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260902-v0115-auth-rbac" />
   </head>
   <body>
+    <section id="authGate" class="auth-gate" aria-modal="true" role="dialog">
+      <form id="loginForm" class="login-card">
+        <div class="eyebrow">Content Creation</div>
+        <h1>登录创作工作台</h1>
+        <label>用户名<input id="loginUsername" autocomplete="username" required /></label>
+        <label>密码<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+        <button id="loginSubmit" class="button primary" type="submit">登录</button>
+        <div id="loginError" class="error-line" aria-live="polite"></div>
+      </form>
+    </section>
     <main class="shell">
       <aside class="rail">
         <section class="panel project-panel">
@@ -54,8 +64,14 @@
             <label><span>创作</span><select id="writingModelSelect" class="select model-select"></select></label>
             <label><span>审查</span><select id="reviewModelSelect" class="select model-select"></select></label>
             <label><span>生图</span><select id="imageModelSelect" class="select model-select"></select></label>
+            <div class="model-connectivity">
+              <button id="modelCheckBtn" class="button ghost" type="button">检查联通</button>
+              <span id="modelCheckStatus" class="model-check-status" data-tone="idle">未检查</span>
+            </div>
           </div>
           <nav class="top-actions">
+            <span id="currentUserName" class="current-user"></span>
+            <button id="logoutBtn" class="button ghost" type="button">退出</button>
             <button id="upgradeBtn" class="button" type="button" title="检查 GitHub 最新版本，并在确认后执行备份、升级与重启。">更新</button>
             <button id="doctorBtn" class="button" type="button">诊断</button>
           </nav>
@@ -132,12 +148,10 @@
             <span>短片</span>
             <input id="storyboardBeatInput" class="storyboard-beat-input" type="number" min="1" step="1" placeholder="分镜" title="填写分镜编号，只生成该分镜目录；留空则生成全部分镜" />
             <button id="visualPromptBtn" class="button" type="button">生词</button>
-            <button id="storyboardImagesBtn" class="button" type="button">生图</button>
+            <button id="storyboardImagesBtn" class="button" type="button" disabled title="未配置可用生图模型">生图</button>
           </div>
           <textarea id="messageInput" placeholder="输入创作需求、场景、角色动作或修订方向"></textarea>
           <div class="composer-actions">
-            <label class="toggle"><input id="aiToggle" type="checkbox" /> <span>网页模型</span></label>
-            <div id="providerChecks" class="provider-checks"></div>
             <button id="chatBtn" class="button success" type="button">聊天</button>
             <button id="sendBtn" class="button primary" type="submit">创作</button>
             <label class="theme-control">
@@ -161,9 +175,7 @@
         <section class="panel status-card observe-panel">
           <div class="panel-title">观察</div>
           <div class="status-tabs" role="tablist" aria-label="观察面板">
-            <button class="status-tab active" type="button" data-status-tab="cost">成本</button>
-            <button class="status-tab" type="button" data-status-tab="invocation">任务</button>
-            <button class="status-tab" type="button" data-status-tab="harness">门禁</button>
+            <button class="status-tab active" type="button" data-status-tab="invocation">任务</button>
             <button class="status-tab" type="button" data-status-tab="trajectory">轨迹</button>
             <button class="status-tab" type="button" data-status-tab="review">复盘</button>
             <button class="status-tab" type="button" data-status-tab="recall">复用</button>
@@ -172,14 +184,8 @@
             <button class="status-tab" type="button" data-status-tab="wiki">共识</button>
           </div>
           <div class="status-tab-body">
-            <div class="status-pane active" data-status-pane="cost">
-              <div id="costCard" class="cost-card muted-line">加载中</div>
-            </div>
-            <div class="status-pane" data-status-pane="invocation">
+            <div class="status-pane active" data-status-pane="invocation">
               <div id="invocationCard" class="observability-card muted-line">尚未运行</div>
-            </div>
-            <div class="status-pane" data-status-pane="harness">
-              <div id="harnessCard" class="observability-card muted-line">加载中</div>
             </div>
             <div class="status-pane" data-status-pane="trajectory">
               <div id="trajectoryCard" class="observability-card muted-line">等待任务</div>
@@ -209,6 +215,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260728-v0110-image-preview"></script>
+    <script src="/static/app.js?v=20260902-v0116-restricted-admin"></script>
   </body>
 </html>

@@ -5,12 +5,12 @@ import re
 
 _INLINE_TAG_RE = re.compile(
     r"[\[【]\s*(?:"
-    r"五维|技法|源文档|原文档|provider|Provider|角色|人物|材料|本章大纲|前情|人物设定|参考技法"
+    r"五维|技法|源文档|原文档|角色|人物|材料|本章大纲|前情|人物设定|参考技法"
     r")[^\]】]*[\]】]"
 )
 _TRAILING_SOURCE_NOTE_RE = re.compile(
     r"\s*[（(]\s*(?:"
-    r"五维|技法|源文档|原文档|provider|Provider|角色|人物|材料|来源"
+    r"五维|技法|源文档|原文档|角色|人物|材料|来源"
     r")[^）)]*[）)]\s*$"
 )
 _SOURCE_SECTION_RE = re.compile(
@@ -19,7 +19,7 @@ _SOURCE_SECTION_RE = re.compile(
 )
 _SOURCE_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:"
-    r"来源|材料来源|引用来源|provider|Provider|五维|技法|源文档|原文档"
+    r"来源|材料来源|引用来源|五维|技法|源文档|原文档"
     r")\s*[：:｜|].*$"
 )
 
@@ -27,8 +27,8 @@ _SOURCE_LINE_RE = re.compile(
 def clean_final_draft(text: str, *, task: str = "", project_kind: str = "") -> str:
     """Return user-facing final content without internal provenance labels.
 
-    Provider answers and merge metadata keep provenance in artifacts; the draft
-    that users confirm/archive must be readable content only.
+    Internal metadata keeps provenance in artifacts; the draft that users
+    confirm/archive must be readable content only.
     """
     value = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not value.strip():

@@ -6,7 +6,9 @@
 
 Agentic Writing Workbench 是一个本地优先的智能创作工作台，面向长篇小说、电影短片脚本和灵感随想等长期创作项目。它不是简单的聊天窗口，而是把一次开放式创作请求转成可审计的工作流：理解意图、根据项目结构路由、精确组装材料、生成或收集候选稿、审查融合、等待用户确认，最后才写回项目文件。
 
-项目基于 FastAPI、LangGraph、LangChain 兼容模型、可选网页 AI provider、项目 Wiki、可恢复任务状态和公共写作技能库构建。
+工作台使用同源 HttpOnly Session 登录。`/admin` 提供轻量用户、角色、菜单和角色权限管理；普通用户只能访问分配给自己的创作项目，超管可管理全部项目。
+
+项目基于 FastAPI、LangGraph、LangChain 兼容模型、项目 Wiki、可恢复任务状态和公共写作技能库构建。
 
 ![架构总图](docs/images/architecture-overview.png)
 
@@ -14,7 +16,6 @@ Agentic Writing Workbench 是一个本地优先的智能创作工作台，面向
 
 - 长期创作很容易在多轮对话、多个文件和多次修订之间丢失上下文。
 - LLM 经常基于不完整或无关材料作答，导致内容偏题或污染项目文件。
-- 网页 AI provider 有价值，但结果难以统一抓取、对比、融合和归档。
 - 生成内容不应该静默覆盖大纲、正文、剧本、设定或项目规则。
 - 参考小说、写作技法、项目记忆和审查标准需要稳定进入创作流程。
 
@@ -26,10 +27,6 @@ Agentic Writing Workbench 是一个本地优先的智能创作工作台，面向
 |---|---|
 | ![创作驾驶舱](docs/images/ui-writing.jpg) | ![项目 Wiki](docs/images/ui-project-wiki.jpg) |
 
-| Provider 材料收集 | 诊断检查 |
-|---|---|
-| ![Provider 聊天](docs/images/ui-provider-chat.jpg) | ![诊断检查](docs/images/ui-diagnostics.jpg) |
-
 | 项目类型 | 正文创作 |
 |---|---|
 | ![项目类型](docs/images/ui-project-types.jpg) | ![正文创作](docs/images/ui-prose-creation.png) |
@@ -39,9 +36,9 @@ Agentic Writing Workbench 是一个本地优先的智能创作工作台，面向
 - **项目结构优先**：每个项目都有 `维基/project-structure.json`。路由、归档和恢复逻辑先读结构，再决定文件路径。
 - **先理解再执行**：用户提问先经过 LLM 意图分析，再进入合适的流程节点。
 - **材料精确组装**：按章节、人物、情节、风格、记忆、参考资料和技法库选择材料，而不是整文件塞进 prompt。
-- **人工确认门禁**：生成稿、provider 材料、文件改写、归档写回都需要用户确认。
-- **任务可恢复**：未完成任务、状态栏耗时、provider 结果和确认状态支持刷新或重启后恢复。
-- **本地数据归属**：密钥、浏览器会话、私有小说、生成产物、日志和记忆都保存在本地并被 Git 忽略。
+- **人工确认门禁**：生成稿、文件改写和归档写回都需要用户确认。
+- **任务可恢复**：未完成任务、状态栏耗时和确认状态支持刷新或重启后恢复。
+- **本地数据归属**：密钥、私有小说、生成产物、日志和记忆都保存在本地并被 Git 忽略。
 
 ## 总体框架
 
@@ -51,8 +48,8 @@ Web UI
   -> LangGraph 创作工作流
   -> 项目 Wiki + SOP + pending intent 记忆
   -> 材料组装 + RAG/五维库/参考资料检索
-  -> 本地 LLM 角色与可选网页 provider
-  -> 审查、融合、定稿
+  -> API LLM 角色
+  -> 生成、审查、定稿
   -> 用户确认
   -> 归档写回 + 记忆/Wiki 更新
 ```
@@ -83,11 +80,11 @@ Web UI
 
 右侧观察卡片把 invocation 证据分为三种用途：
 
-- **门禁**：从 Harness、预算、路由和失败记录生成候选建议；只提建议，不自动修改 SOP 或启用新门禁。
-- **轨迹**：按 `invocation_id` 汇总事件、节点、路由、预算和 Harness 时间线；只读，不改变任务状态。
+- **任务**：展示最近 invocation 的状态和节点进度。
+- **轨迹**：按 `invocation_id` 汇总事件和节点时间线；只读，不改变任务状态。
 - **经验**：用户点击“采纳首条”后才写入正式 lessons，并按通用性分流到公共或项目技能库。
 
-“生成复盘”会将 SOP、路由、预算、Harness、provider、产物和验收清单整理为 Review Packet 并写入当前项目输出目录。当前经验卡片不能先编辑草案；采纳前应先核对来源 invocation 与 Review Packet。
+“生成复盘”会将 SOP、产物和验收清单整理为 Review Packet 并写入当前项目输出目录。当前经验卡片不能先编辑草案；采纳前应先核对来源 invocation 与 Review Packet。
 
 ![Writing 观察卡手动功能](docs/images/writing-observation-actions-flow.png)
 
@@ -96,9 +93,8 @@ Web UI
 ## 技术路线
 
 - **后端**：FastAPI + SSE，负责流式输出、状态流转和任务恢复。
-- **工作流**：LangGraph StateGraph，编排意图分析、路由、材料装配、provider fanout、审查、定稿和归档。
+- **工作流**：LangGraph StateGraph，编排意图分析、路由、材料装配、生成、审查、定稿和归档。
 - **模型层**：通过 `.env.shared` 注册 OpenAI 兼容文本模型和生图模型。
-- **Provider 层**：可选 Playwright 浏览器自动化，接入网页 AI provider，并在融合前等待用户确认。
 - **记忆与恢复**：pending intent、invocation 日志、项目 Wiki、workflow status 快照共同支撑中断恢复。
 - **知识层**：项目 Wiki、LLM Wiki、写作技法知识库、公共技能库、可选 Chroma/Embedding sidecar 和本地 TF-IDF 兜底。
 - **前端**：静态 HTML/CSS/JS，包含项目卡片、文件树、只读 Wiki、模型选择、任务状态栏和确认按钮。
@@ -120,14 +116,13 @@ scripts/upgrade-to-latest.py
 scripts/publish-release.py
 ```
 
-干净发布版不包含私有密钥、provider 会话、浏览器资料、参考小说原文、Chroma 数据、任务日志、生成产物或项目私有内容。
+干净发布版不包含私有密钥、参考小说原文、Chroma 数据、任务日志、生成产物或项目私有内容。
 
 ## 快速开始
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
 Copy-Item .env.shared.example .env.shared
 notepad .env.shared
 .\.venv\Scripts\python.exe -m uvicorn app.writing_web:app --host 127.0.0.1 --port 7861
@@ -145,7 +140,7 @@ http://127.0.0.1:7861/
 
 在 Web UI 顶部点击“更新”，可以检查 GitHub 最新 Release。页面会展示新版内容，并在用户确认后执行升级。确认后，后端会下载发布包、创建备份、更新框架文件、重启服务，浏览器会等待服务恢复后自动刷新。
 
-升级前，后端会检查活跃 provider 任务、未完成创作 invocation、可恢复 pending intent。如果仍有任务运行中，或正在等待用户确认/归档，升级会被阻止，直到任务完成、归档、拒绝或清理。
+升级前，后端会检查未完成创作 invocation 和可恢复 pending intent。如果仍有任务运行中，或正在等待用户确认/归档，升级会被阻止，直到任务完成、归档、拒绝或清理。
 
 升级到 GitHub 最新 Release：
 
@@ -209,6 +204,8 @@ backups/
 - `IMAGE_LLM_ROLE_IMAGE`：默认生图模型。
 
 生图默认参数为 `16:9`、`1K`、`1536x1024`。请在本地填入自己的模型地址和密钥。
+
+顶部“检查联通”会通过 `/api/writing/models/check` 对已注册文本模型发送最小请求，并显示成功数和延迟；检查结果不会返回 API Key。仅配置一个文本模型时，聊天、创作和审查角色应都指向该模型。
 
 ## 可选向量 Sidecar
 

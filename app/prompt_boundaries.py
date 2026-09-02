@@ -10,7 +10,7 @@ _VISIBLE_SOURCE_INSTRUCTION_PATTERNS = [
     ),
     (
         r"每段结尾用方括号标注材料来源[^\n。；;]*[。；;]?",
-        "每段结尾不要输出材料来源、provider、五维、技法或源文档标签。",
+        "每段结尾不要输出材料来源、五维、技法或源文档标签。",
     ),
     (
         r"每个事件标注来源[^\n。；;]*[。；;]?",
@@ -31,7 +31,7 @@ def sanitize_delivery_boundary_text(text: str | None) -> str:
     """Neutralize legacy specs that ask the model to print source labels.
 
     Source traceability remains an internal quality gate. User-adoptable drafts
-    must not carry provider/doc/five-dimension/technique tail notes.
+    must not carry source-document, five-dimension, or technique tail notes.
     """
     value = str(text or "")
     if not value:

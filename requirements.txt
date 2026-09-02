@@ -15,4 +15,3 @@ python-multipart
 scikit-learn
 jieba
 faiss-cpu
-playwright

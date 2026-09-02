@@ -48,12 +48,8 @@ const storyboardBeatInput = document.querySelector("#storyboardBeatInput");
 const visualPromptBtn = document.querySelector("#visualPromptBtn");
 const storyboardImagesBtn = document.querySelector("#storyboardImagesBtn");
 const messageInput = document.querySelector("#messageInput");
-const aiToggle = document.querySelector("#aiToggle");
-const providerChecks = document.querySelector("#providerChecks");
 const missionCard = document.querySelector("#missionCard");
-const costCard = document.querySelector("#costCard");
 const invocationCard = document.querySelector("#invocationCard");
-const harnessCard = document.querySelector("#harnessCard");
 const trajectoryCard = document.querySelector("#trajectoryCard");
 const reviewPacketCard = document.querySelector("#reviewPacketCard");
 const recallCard = document.querySelector("#recallCard");
@@ -69,11 +65,20 @@ const chatModelSelect = document.querySelector("#chatModelSelect");
 const writingModelSelect = document.querySelector("#writingModelSelect");
 const reviewModelSelect = document.querySelector("#reviewModelSelect");
 const imageModelSelect = document.querySelector("#imageModelSelect");
+const modelCheckBtn = document.querySelector("#modelCheckBtn");
+const modelCheckStatus = document.querySelector("#modelCheckStatus");
+const authGate = document.querySelector("#authGate");
+const loginForm = document.querySelector("#loginForm");
+const loginUsername = document.querySelector("#loginUsername");
+const loginPassword = document.querySelector("#loginPassword");
+const loginSubmit = document.querySelector("#loginSubmit");
+const loginError = document.querySelector("#loginError");
+const currentUserName = document.querySelector("#currentUserName");
+const logoutBtn = document.querySelector("#logoutBtn");
 
 let currentProject = localStorage.getItem("writing.ui.project") || "";
 let currentKind = "generic";
 let latestFlowTask = "";
-let providers = [];
 let collaborationState = null;
 let taskCenterState = null;
 let entityRegistryState = null;
@@ -84,7 +89,7 @@ let activeReferenceExtractJobId = "";
 let referenceExtractTimerId = null;
 const REFERENCE_EXTRACT_JOB_KEY = "writing.reference.extract.job";
 let historyLoadedFor = "";
-let activeStatusTab = "cost";
+let activeStatusTab = "invocation";
 const statusTabSignatures = {};
 let activeFile = null;
 let fileTreeData = null;
@@ -96,23 +101,64 @@ let restoredWorkflowFlow = null;
 let pendingWorkflowRecovery = null;
 let composerBusy = false;
 let latestLessonSuggestions = [];
-let latestHarnessSuggestions = [];
 const adoptingLessonKeys = new Set();
 const adoptedLessonKeys = new Set();
 const collapsedFileDirs = new Set();
-const AI_TOGGLE_KEY = "writing.ui.aiEnabled";
-const PROVIDER_PREFS_KEY = "writing.ui.providerPrefs";
 const MODEL_PREFS_KEY = "writing.ui.modelPrefs";
 const THEME_PREF_KEY = "writing.ui.theme";
 const THEME_VALUES = new Set(["light", "dark", "eye"]);
 let modelRegistry = { models: [], image_models: [], roles: {} };
 let workflowRegistry = { presets: {}, labels: {} };
+let authState = { authenticated: false, user: null, projects: [] };
+
+function showAuthGate(message = "") {
+  authGate.hidden = false;
+  loginError.textContent = message;
+  window.setTimeout(() => loginUsername.focus(), 0);
+}
+
+function applyAuthState(session) {
+  authState = session || { authenticated: false, user: null, projects: [] };
+  if (!authState.authenticated) return showAuthGate();
+  authGate.hidden = true;
+  const user = authState.user || {};
+  currentUserName.textContent = user.display_name || user.username || "";
+  upgradeBtn.hidden = !user.is_superuser;
+}
+
+async function loadAuthSession() {
+  const res = await fetch("/api/auth/session", { cache: "no-store" });
+  const data = await readJsonResponse(res);
+  if (!res.ok || !data.authenticated) {
+    showAuthGate();
+    return false;
+  }
+  applyAuthState(data);
+  const projectIds = new Set((data.projects || []).map((item) => item.id));
+  if (!projectIds.has(currentProject)) currentProject = data.projects?.[0]?.id || "";
+  return true;
+}
+
+async function bootstrapWorkspace() {
+  if (!await loadAuthSession()) return;
+  await Promise.all([loadWorkflowStages(), loadModels()]);
+  if (!currentProject) {
+    projectSelect.innerHTML = '<option value="">暂无项目，请先新建</option>';
+    projectProgress.textContent = "当前账号尚无创作项目";
+    projectInventory.textContent = "";
+    fileTreeEl.textContent = "";
+    return;
+  }
+  await loadStatus();
+  await loadFiles();
+  await loadMission();
+  await loadObservability();
+  await loadPendingWorkflowStatus();
+  await loadChatHistory();
+}
 
 const FALLBACK_STAGE_PRESETS = {
-  draft: ["request_analyze", "need_audit", "draft_assemble", "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker", "prompt_refine", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
-  provider: ["provider_fanout", "provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge"],
-  followup: ["request_analyze", "need_audit", "context_followup", "provider_route", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
-  provider_confirm: ["provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
+  draft: ["request_analyze", "need_audit", "draft_assemble", "creative_state", "methodology_context", "creative_enhancements", "material_profile", "context_broker", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"],
   intervention: ["submit", "memory_lookup", "llm_analysis", "knowledge_settle", "memory_write", "policy_update", "impact_analyze", "primary_write", "primary_artifact", "related_write", "related_pending", "invocation_finalize", "pending_clear", "cleanup", "complete"],
   reference_import: ["reference_import_validate", "reference_import_save", "reference_import_analyze", "reference_import_five_dim", "reference_import_index", "reference_import_refresh"],
   archive: ["archive_submit", "archive_write", "overwrite_confirm", "overwrite", "archive_refresh", "complete"],
@@ -133,21 +179,13 @@ const MATERIAL_ASSEMBLY_SUBSTAGES = [
 const FALLBACK_NODE_LABELS = {
   request_analyze: "请求理解",
   need_audit: "需求审计",
-  context_followup: "上下文续问",
   draft_assemble: "材料装配",
   creative_state: "状态卡/伏笔",
   methodology_context: "方法论匹配",
   creative_enhancements: "增强卡片",
   material_profile: "阶段裁剪",
   context_broker: "上下文调度",
-  prompt_refine: "专业提问",
-  provider_route: "路由决策",
-  provider_fanout: "网页模型",
-  provider_confirm_gate: "确认材料",
-  provider_consensus: "共识归纳",
-  provider_digest: "多维评分",
-  provider_merge: "融合生成",
-  generate: "融合成稿",
+  generate: "生成成稿",
   pre_review: "规则预审",
   model_review: "模型审查",
   draft_finalize: "定稿",
@@ -174,7 +212,6 @@ const FALLBACK_NODE_LABELS = {
 const UI_OPERATION_LABELS = {
   workspace_status: "读取项目状态",
   workspace_files: "刷新文件树",
-  workspace_cost: "刷新成本",
   workspace_mission: "刷新任务",
   workspace_observe: "刷新观察",
   workspace_history: "加载历史",
@@ -195,18 +232,6 @@ const UI_OPERATION_LABELS = {
   chat_submit: "提交聊天",
   chat_model: "模型回答",
   chat_persist: "保存对话",
-  provider_launch: "启动网页模型",
-  provider_wait: "等待网页模型",
-  provider_persist: "保存结果",
-  provider_open: "打开浏览器内核",
-  provider_pin: "固定会话",
-  provider_reset: "重置会话",
-  provider_refresh: "刷新状态",
-  provider_confirm: "确认材料",
-  provider_resume: "恢复生成",
-  provider_consensus: "共识归纳",
-  provider_digest: "逐篇多维评分",
-  provider_merge: "融合生成",
   reference_import_validate: "校验上传",
   reference_import_save: "保存原文",
   reference_import_analyze: "多维抽取",
@@ -292,21 +317,6 @@ function initTheme() {
 
 function saveBoolPref(key, value) {
   localStorage.setItem(key, value ? "1" : "0");
-}
-
-function loadProviderPrefs() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PROVIDER_PREFS_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveProviderPref(provider, checked) {
-  const prefs = loadProviderPrefs();
-  prefs[provider] = Boolean(checked);
-  localStorage.setItem(PROVIDER_PREFS_KEY, JSON.stringify(prefs));
 }
 
 function loadModelPrefs() {
@@ -476,6 +486,7 @@ async function loadModels() {
     renderModelSelect(writingModelSelect, data.models || [], "writing", data.roles?.writing);
     renderModelSelect(reviewModelSelect, data.models || [], "review", data.roles?.review);
     renderModelSelect(imageModelSelect, data.image_models || [], "image", data.roles?.image);
+    renderTasks();
   } catch (error) {
     addMessage("system", `模型配置加载失败：${error}`, "模型");
   }
@@ -498,14 +509,61 @@ function renderModelSelect(select, models, role, defaultKey) {
   for (const model of models) {
     const option = document.createElement("option");
     option.value = model.key;
-    option.textContent = model.model || model.name || model.key;
+    option.dataset.baseLabel = model.model || model.name || model.key;
+    option.textContent = option.dataset.baseLabel;
     option.title = [model.key, model.name, model.base_url].filter(Boolean).join(" · ");
     select.appendChild(option);
   }
-  select.value = models.some((item) => item.key === selected) ? selected : "";
+  select.value = models.some((item) => item.key === selected) ? selected : models[0].key;
 }
 
-aiToggle.checked = loadBoolPref(AI_TOGGLE_KEY, false);
+async function checkModelsConnectivity() {
+  const keys = (modelRegistry.models || []).map((item) => item.key).filter(Boolean);
+  if (!keys.length) {
+    modelCheckStatus.textContent = "无可检查模型";
+    modelCheckStatus.dataset.tone = "error";
+    return;
+  }
+  modelCheckBtn.disabled = true;
+  modelCheckStatus.textContent = "检查中...";
+  modelCheckStatus.dataset.tone = "idle";
+  try {
+    const res = await fetch("/api/writing/models/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_keys: keys, timeout: 30 }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok || !Array.isArray(data.results)) {
+      throw new Error(data.detail || data.error || "模型联通检查失败");
+    }
+    const results = data.results || [];
+    const byKey = new Map(results.map((item) => [item.key, item]));
+    for (const select of [chatModelSelect, writingModelSelect, reviewModelSelect]) {
+      for (const option of select?.options || []) {
+        const result = byKey.get(option.value);
+        const baseLabel = option.dataset.baseLabel || option.textContent || option.value;
+        option.textContent = result ? `${baseLabel} ${result.ok ? "✓" : "×"}` : baseLabel;
+        if (result) option.title = result.ok
+          ? `${baseLabel} · 联通 ${result.latency_ms || 0}ms`
+          : `${baseLabel} · ${result.error || "联通失败"}`;
+      }
+    }
+    const healthy = results.filter((item) => item.ok);
+    const first = results[0] || {};
+    modelCheckStatus.textContent = `${healthy.length}/${results.length} 正常${first.latency_ms ? ` · ${first.latency_ms}ms` : ""}`;
+    modelCheckStatus.title = results.map((item) => (
+      item.ok ? `${item.name || item.key}: ${item.latency_ms || 0}ms` : `${item.name || item.key}: ${item.error || "失败"}`
+    )).join("\n");
+    modelCheckStatus.dataset.tone = healthy.length === results.length ? "ok" : "error";
+  } catch (error) {
+    modelCheckStatus.textContent = "检查失败";
+    modelCheckStatus.title = String(error);
+    modelCheckStatus.dataset.tone = "error";
+  } finally {
+    modelCheckBtn.disabled = false;
+  }
+}
 
 function projectKindLabel(kind) {
   return {
@@ -574,20 +632,6 @@ function rememberFlowTask(...sources) {
     }
   }
   return "";
-}
-
-function loginConfirmed() {
-  const result = {};
-  for (const input of providerChecks.querySelectorAll("[data-provider]")) {
-    result[input.dataset.provider] = input.checked;
-  }
-  return result;
-}
-
-function syncAiToggleFromProviders() {
-  const hasSelectedProvider = Object.values(loginConfirmed()).some(Boolean);
-  aiToggle.checked = hasSelectedProvider;
-  saveBoolPref(AI_TOGGLE_KEY, aiToggle.checked);
 }
 
 function escapeHtml(value) {
@@ -949,76 +993,48 @@ function restoreFlowFromWorkflowStatus(status = {}) {
 
 function normalizeWorkflowSnapshot(status = {}) {
   const out = { ...(status || {}) };
-  let stages = Array.isArray(out.stages) ? out.stages.filter(Boolean) : [];
-  if (stages.includes("provider_confirm_gate") && !stages.includes("request_analyze")) {
-    stages = stagesForProviderConfirmRestore();
-  }
+  const currentDraftStages = workflowStages("draft");
+  let stages = Array.isArray(out.stages)
+    ? out.stages.filter((node) => node && currentDraftStages.includes(node))
+    : [];
+  if (!stages.length) stages = workflowStages("draft");
   stages = normalizeWorkflowStageOrder(stages);
-  const done = new Set(Array.isArray(out.done) ? out.done.filter(Boolean) : []);
+  const done = new Set(
+    (Array.isArray(out.done) ? out.done : []).filter((node) => node && stages.includes(node)),
+  );
   if (out.status === "awaiting_confirm" && (out.current === "user_confirm" || done.has("draft_finalize"))) {
     out.current = "user_confirm";
     done.delete("user_confirm");
     if (out.durations_ms && typeof out.durations_ms === "object") delete out.durations_ms.user_confirm;
     if (out.total_ms !== null && out.total_ms !== undefined) delete out.total_ms;
   }
-  if (stages.includes("provider_confirm_gate") && stages.includes("request_analyze")) {
-    const activeConfirmNodes = [
-      "provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge",
-      "generate", "pre_review", "model_review", "draft_finalize", "user_confirm",
-    ];
-    if (activeConfirmNodes.some((node) => done.has(node) || out.current === node)) {
-      for (const node of stages.slice(0, stages.indexOf("provider_confirm_gate"))) {
-        done.add(node);
-      }
-    }
-  }
   if (done.has("draft_assemble")) {
     for (const node of MATERIAL_ASSEMBLY_SUBSTAGES) {
       if (stages.includes(node)) done.add(node);
     }
   }
-  if (["provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"].some((node) => done.has(node))) {
-    for (const node of ["provider_consensus", "provider_digest", "provider_merge"]) {
-      if (stages.includes(node)) done.add(node);
-    }
+  if (out.current && !stages.includes(out.current)) {
+    out.current = "";
   }
   if (out.current && done.has(out.current)) {
     const idx = stages.indexOf(out.current);
     const next = stages.slice(Math.max(0, idx + 1)).find((node) => !done.has(node));
     if (next) out.current = next;
   }
-  if (!out.current) {
-    out.current = stages.find((node) => !done.has(node)) || "";
-  }
-  if (["provider_confirm_gate", "user_confirm", "overwrite_confirm"].includes(out.current) && !done.has(out.current)) {
+  if (!out.current) out.current = stages.find((node) => !done.has(node)) || "";
+  if (["user_confirm", "overwrite_confirm"].includes(out.current) && !done.has(out.current)) {
     out.status = "awaiting_confirm";
+  } else if (out.status === "awaiting_confirm") {
+    out.status = "running";
   }
   out.stages = stages;
-  out.done = Array.from(done).filter((node) => stages.includes(node));
+  out.done = Array.from(done);
   return out;
-}
-
-function stagesForProviderConfirmRestore() {
-  const base = workflowStages("draft");
-  const routeIndex = base.indexOf("provider_route");
-  if (routeIndex < 0) return workflowStages("provider_confirm");
-  return [
-    ...base.slice(0, routeIndex + 1),
-    ...workflowStages("provider"),
-    ...base.slice(routeIndex + 1),
-  ];
 }
 
 function normalizeWorkflowStageOrder(stages = []) {
   if (!stages.includes("draft_assemble")) return stages;
-  const base = workflowStages("draft");
-  const canonical = stages.includes("provider_fanout")
-    ? [
-        ...base.slice(0, base.indexOf("provider_route") + 1),
-        ...workflowStages("provider"),
-        ...base.slice(base.indexOf("provider_route") + 1),
-      ]
-    : base;
+  const canonical = workflowStages("draft");
   const order = new Map(canonical.map((node, idx) => [node, idx]));
   return [...stages].sort((left, right) => {
     const leftOrder = order.has(left) ? order.get(left) : canonical.length + stages.indexOf(left);
@@ -1054,7 +1070,7 @@ function setBusy(busy, label = "运行中") {
   if (saveFileBtn) saveFileBtn.disabled = busy || !canEditActiveFile();
   if (rewriteFileBtn) rewriteFileBtn.disabled = busy || !canEditActiveFile();
   if (visualPromptBtn) visualPromptBtn.disabled = busy;
-  if (storyboardImagesBtn) storyboardImagesBtn.disabled = busy;
+  if (storyboardImagesBtn) storyboardImagesBtn.disabled = busy || !hasAvailableImageModel();
   if (storyboardBeatInput) storyboardBeatInput.disabled = busy;
   workspaceTitle.textContent = busy ? label : workspaceTitleForView();
 }
@@ -1129,7 +1145,6 @@ function draftResultMeta(ctx = {}) {
     project_kind: ctx.project_kind || currentKind,
     invocation_id: ctx.invocation_id || "",
     request_analysis: ctx.request_analysis || {},
-    provider_answers: Array.isArray(ctx.provider_answers) ? ctx.provider_answers : [],
     artifacts: ctx.artifacts || {},
     merge_info: ctx.merge_info || {},
   };
@@ -1188,6 +1203,9 @@ async function readJsonResponse(res) {
 }
 
 function assertApiOk(res, data, fallback = "请求失败") {
+  if (res.status === 401) {
+    showAuthGate("登录已过期，请重新登录");
+  }
   if (!res.ok || data?.ok === false) {
     throw new Error(data?.detail || data?.error || data?.message || fallback);
   }
@@ -1210,10 +1228,6 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 90000) {
   }
 }
 
-function providerDisplayName(provider) {
-  return providers.find((item) => item.id === provider)?.name || provider;
-}
-
 function clearMessages() {
   messagesEl.innerHTML = "";
   clearStageBar();
@@ -1232,8 +1246,6 @@ async function reloadProjectWorkspace(options = {}) {
   await loadStatus();
   flow?.step("workspace_files");
   await loadFiles();
-  flow?.step("workspace_cost");
-  await loadCostBoard();
   flow?.step("workspace_mission");
   await loadMission();
   flow?.step("workspace_observe");
@@ -1309,13 +1321,9 @@ const GRAPH_LAYOUT = {
   draft_entry: [1000, 548],
   need_audit: [1000, 654],
   draft_assemble: [1000, 760],
-  prompt_refine: [1000, 866],
-  provider_route: [1000, 972],
-  provider_fanout: [760, 1088],
-  provider_confirm_gate: [760, 1194],
-  generate: [1200, 1088],
-  pre_review: [1200, 1194],
-  model_review: [1200, 1300],
+  generate: [1000, 972],
+  pre_review: [1000, 1078],
+  model_review: [1000, 1194],
   draft_finalize: [1000, 1416],
   __end__: [660, 1532],
 };
@@ -1323,8 +1331,7 @@ const GRAPH_GROUP_BANDS = [
   ["入口理解", 92, 476],
   ["路由分支", 508, 592],
   ["创作主线", 620, 1010],
-  ["网页模型", 1050, 1232],
-  ["审查回环", 1050, 1340],
+  ["审查回环", 940, 1340],
   ["定稿确认", 1378, 1570],
 ];
 
@@ -2055,13 +2062,6 @@ function messageSeq(msg = {}) {
   return Number.parseInt(msg.seq || "0", 10) || 0;
 }
 
-function providerAnswersFromDraftData(data = {}) {
-  if (Array.isArray(data.provider_answers) && data.provider_answers.length) return data.provider_answers;
-  const artifactAnswers = data.artifacts?.provider_answers?.provider_answers;
-  if (Array.isArray(artifactAnswers) && artifactAnswers.length) return artifactAnswers;
-  return [];
-}
-
 function workflowRecoveryPhase(status = {}) {
   const stages = Array.isArray(status.stages) ? status.stages : [];
   const current = status.current || "";
@@ -2069,7 +2069,6 @@ function workflowRecoveryPhase(status = {}) {
   if (state === "awaiting_archive" || stages.includes("archive_submit") || current.startsWith("archive_") || current === "overwrite_confirm" || current === "overwrite") {
     return "archive";
   }
-  if (state === "awaiting_confirm" && current === "provider_confirm_gate") return "provider_confirm";
   if (state === "awaiting_confirm" && current === "user_confirm") return "user_confirm";
   return "";
 }
@@ -2089,42 +2088,15 @@ function workflowHasReachedStage(status = {}, stage = "") {
   return targetIndex >= 0 && currentIndex > targetIndex;
 }
 
-function workflowPastProviderGate(status = {}) {
-  const done = workflowDoneSet(status);
-  if (done.has("provider_confirm_gate")) return true;
-  return [
-    "provider_consensus", "provider_digest", "provider_merge",
-    "generate", "pre_review", "model_review", "draft_finalize", "user_confirm",
-  ].some((stage) => workflowHasReachedStage(status, stage));
-}
-
-function workflowNeedsProviderConfirm(status = {}) {
-  return workflowRecoveryPhase(status) === "provider_confirm" && !workflowPastProviderGate(status);
-}
-
 function workflowCanRecoverDraft(status = {}) {
   if (workflowRecoveryPhase(status) === "user_confirm") return true;
   return workflowHasReachedStage(status, "draft_finalize");
 }
 
-function providerHistoryDoneText(invocationId = "", restore = {}) {
-  const status = pendingWorkflowRecovery?.status || {};
-  const workflowInvocationId = restore.workflowInvocationId || status.invocation_id || "";
-  if (!invocationId || invocationId !== workflowInvocationId) return "材料已确认，融合稿已生成。";
-  const hasDraft = Boolean(restore.draftInvocations?.has(invocationId));
-  if (hasDraft) return "材料已确认，融合稿已生成。";
-  if (workflowCanRecoverDraft(status)) return "材料已确认，已进入定稿；正文内容等待恢复或返回。";
-  if (workflowPastProviderGate(status)) return "材料已确认，正在继续融合。";
-  return "材料已确认。";
-}
-
 function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
-  const completedProviderInvocations = new Set();
   const draftInvocations = new Set();
-  const providerAnswersByInvocation = new Map();
   const draftByInvocation = new Map();
   const draftBySeq = new Map();
-  const providerByInvocation = new Map();
   const archivedInvocations = new Set();
   const archivePendingByInvocation = new Map();
   const looseArchivePending = [];
@@ -2136,11 +2108,6 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
       if (!invocationId) continue;
       draftInvocations.add(invocationId);
       draftByInvocation.set(invocationId, msg);
-      completedProviderInvocations.add(invocationId);
-      const answers = providerAnswersFromDraftData(msg.data || {});
-      if (answers.length) providerAnswersByInvocation.set(invocationId, answers);
-    } else if (msg.kind === "provider" && invocationId) {
-      providerByInvocation.set(invocationId, msg);
     } else if (msg.kind === "archive_result" && invocationId) {
       archivedInvocations.add(invocationId);
       archivePendingByInvocation.delete(invocationId);
@@ -2154,13 +2121,10 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
   }
 
   let pendingDraftSeq = 0;
-  let pendingProviderSeq = 0;
   const pendingArchiveByDraftSeq = new Map();
   const workflowStatus = workflowRecovery?.status || {};
   const workflowInvocationId = workflowStatus.invocation_id || workflowRecovery?.pending?.invocation_id || "";
   const workflowPhase = workflowRecoveryPhase(workflowStatus);
-  const workflowProviderGateDone = Boolean(workflowInvocationId && workflowPastProviderGate(workflowStatus));
-  if (workflowProviderGateDone) completedProviderInvocations.add(workflowInvocationId);
   for (const [invocationId, pending] of archivePendingByInvocation.entries()) {
     const draft = draftByInvocation.get(invocationId);
     if (draft) {
@@ -2196,9 +2160,6 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
   if (workflowPhase === "user_confirm" && workflowInvocationId) {
     const draft = draftByInvocation.get(workflowInvocationId);
     if (draft) pendingDraftSeq = messageSeq(draft);
-  } else if (workflowNeedsProviderConfirm(workflowStatus) && workflowInvocationId) {
-    const provider = providerByInvocation.get(workflowInvocationId);
-    if (provider) pendingProviderSeq = messageSeq(provider);
   } else if (!workflowPhase) {
     for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
       const msg = messages[idx] || {};
@@ -2208,23 +2169,13 @@ function buildHistoryRestoreState(messages = [], workflowRecovery = null) {
         pendingDraftSeq = messageSeq(msg);
         break;
       }
-      if (msg.kind === "provider" && msg.data?.awaiting_provider_confirm) {
-        const invocationId = messageInvocationId(msg);
-        if (!invocationId || !completedProviderInvocations.has(invocationId)) {
-          pendingProviderSeq = messageSeq(msg);
-          break;
-        }
-      }
       if (msg.kind === "intervene" || msg.role === "user") break;
     }
   }
 
   return {
-    completedProviderInvocations,
     draftInvocations,
-    providerAnswersByInvocation,
     pendingDraftSeq,
-    pendingProviderSeq,
     pendingArchiveByDraftSeq,
     workflowPhase,
     workflowInvocationId,
@@ -2327,8 +2278,6 @@ function invocationStageTimings(record = {}, stages = []) {
   if (!events.length) return { durations, stageStartedAt };
 
   let cursor = parseEventTime(record.created_at) || events[0].ts;
-  const postProviderConfirmFlow = stages[0] === "provider_confirm_gate" && !stages.includes("provider_fanout");
-  let active = !postProviderConfirmFlow;
   const addDuration = (node, start, end) => {
     if (!node || !stages.includes(node) || !start || !end || end < start) return;
     const delta = end - start;
@@ -2338,33 +2287,9 @@ function invocationStageTimings(record = {}, stages = []) {
 
   for (const event of events) {
     const node = event.node || "";
-    if (postProviderConfirmFlow && !active && event.event !== "provider_material_confirmed") {
-      continue;
-    }
-    if (event.event === "provider_fanout_started") {
-      cursor = event.ts;
-      if (stages.includes("provider_fanout")) stageStartedAt.set("provider_fanout", event.ts);
-      continue;
-    }
-    if (event.event === "provider_material_confirmed") {
-      active = true;
-      cursor = event.ts;
-      if (stages.includes("provider_confirm_gate")) stageStartedAt.set("provider_confirm_gate", event.ts);
-      continue;
-    }
     if (event.event === "graph_resume") {
       cursor = event.ts;
       if (stages.includes(node)) stageStartedAt.set(node, event.ts);
-      continue;
-    }
-    if (event.event === "provider_stage" && node && stages.includes(node)) {
-      if (event.status === "running") {
-        stageStartedAt.set(node, event.ts);
-        cursor = event.ts;
-      } else if (event.status === "done") {
-        addDuration(node, stageStartedAt.get(node) || cursor, event.ts);
-        cursor = event.ts;
-      }
       continue;
     }
     if (event.event === "graph_node_completed" && node && stages.includes(node)) {
@@ -2377,13 +2302,6 @@ function invocationStageTimings(record = {}, stages = []) {
     }
   }
 
-  const providers = record.providers || {};
-  const providerElapsed = Object.values(providers)
-    .map((item) => Number(item?.elapsed_seconds || 0))
-    .filter((value) => value > 0);
-  if (stages.includes("provider_fanout") && providerElapsed.length) {
-    durations.set("provider_fanout", Math.max(...providerElapsed) * 1000);
-  }
   return { durations, stageStartedAt };
 }
 
@@ -2430,16 +2348,7 @@ function renderStoredMessage(msg, restore = {}) {
   if (msg.kind === "archive_pending") {
     return;
   }
-  if (msg.kind === "provider" && msg.data) {
-    const invocationId = messageInvocationId(msg);
-    renderStoredProviderMessage(msg.data, {
-      seq: messageSeq(msg),
-      completed: restore.completedProviderInvocations?.has(invocationId),
-      pending: restore.pendingProviderSeq === messageSeq(msg),
-      restoredAnswers: restore.providerAnswersByInvocation?.get(invocationId) || [],
-      completedText: providerHistoryDoneText(invocationId, restore),
-      flow: restore.workflowPhase === "provider_confirm" ? restoredWorkflowFlow : null,
-    });
+  if (!["text", "draft_result", "archive_result", "intervene"].includes(msg.kind)) {
     return;
   }
   let text = msg.text || "";
@@ -2465,8 +2374,7 @@ function renderStoredMessage(msg, restore = {}) {
     messageRef.item.appendChild(note);
     attachArchiveControls(messageRef.item, archiveCtx);
   } else if (msg.kind === "draft_result" && restore.pendingDraftSeq === messageSeq(msg) && text) {
-    const hasProvider = Boolean(messageInvocationId(msg) && restore.completedProviderInvocations?.has(messageInvocationId(msg)));
-    const stages = hasProvider ? workflowStages("provider_confirm") : workflowStages("draft");
+    const stages = workflowStages("draft");
     const flow = restore.workflowPhase
       ? restoredWorkflowFlow
       : restoreFlowAt(stages, "user_confirm", restore.timingByInvocation?.get(messageInvocationId(msg)));
@@ -2477,194 +2385,6 @@ function renderStoredMessage(msg, restore = {}) {
       model_preferences: modelPreferences(),
     }, flow);
   }
-}
-
-function renderStoredProviderMessage(data, options = {}) {
-  const wrap = document.createElement("article");
-  wrap.className = "message assistant";
-  wrap._providerSeq = Number(options.seq || 0);
-  wrap._providerData = data || {};
-  wrap._providerContext = data?.context || {};
-  const title = document.createElement("div");
-  title.className = "message-title";
-  title.textContent = data.message || "网页模型协同结果";
-  wrap.appendChild(title);
-  const grid = document.createElement("div");
-  grid.className = "provider-card-grid";
-  wrap._grid = grid;
-  wrap._cards = {};
-  const completed = Boolean(options.completed);
-  const restoredAnswers = Array.isArray(options.restoredAnswers) ? options.restoredAnswers : [];
-  const results = (data.results || []).map((result) => {
-    if (String(result.result || "").trim() || !restoredAnswers.length) return result;
-    const restored = restoredAnswers.find((item) => (item.provider || "") === (result.provider || ""));
-    return restored ? { ...result, ...restored, status: restored.status || "success" } : result;
-  });
-  for (const result of results) {
-    const card = renderProviderCard(result, {
-      editable: !completed && Boolean(data.manual_entry || data.awaiting_provider_confirm),
-      completed,
-    });
-    grid.appendChild(card);
-    if (result.provider) wrap._cards[result.provider] = card;
-  }
-  wrap.appendChild(grid);
-  if (completed) {
-    const done = document.createElement("div");
-    done.className = "muted-line provider-history-done";
-    done.textContent = options.completedText || "材料已确认，融合稿已生成。";
-    wrap.appendChild(done);
-  }
-  messagesEl.appendChild(wrap);
-  if (!completed && options.pending && data.awaiting_provider_confirm && data.context) {
-    attachProviderGate(wrap, data.context, options.flow || {});
-  }
-}
-
-function providerResultsForPersistence(gridMsg) {
-  return Object.values(gridMsg?._cards || {})
-    .map((card) => {
-      const result = syncProviderCardResult(card);
-      if (!result?.provider) return null;
-      const status = result.status || (result.result ? "success" : "partial");
-      return {
-        provider: result.provider,
-        name: result.name,
-        status,
-        result: result.result || "",
-        files: result.files || [],
-        edited: Boolean(result.edited),
-        original_result: result.original_result || "",
-      };
-    })
-    .filter(Boolean);
-}
-
-function providerMessagePayload(gridMsg) {
-  const base = gridMsg?._providerData || {};
-  return {
-    role: "assistant",
-    kind: "provider",
-    meta: base.meta || "网页模型协同",
-    track: base.track || gridMsg?._providerContext?.track || "create",
-    data: {
-      ...base,
-      ok: base.ok !== false,
-      awaiting_provider_confirm: base.awaiting_provider_confirm !== false,
-      message: base.message || "网页模型协同结果",
-      results: providerResultsForPersistence(gridMsg),
-      context: gridMsg?._providerContext || base.context || {},
-    },
-  };
-}
-
-function scheduleProviderMessageUpdate(gridMsg) {
-  if (!gridMsg?._providerSeq) return;
-  if (gridMsg._providerPersistTimer) window.clearTimeout(gridMsg._providerPersistTimer);
-  gridMsg._providerPersistTimer = window.setTimeout(async () => {
-    gridMsg._providerPersistTimer = null;
-    await flushProviderMessageUpdate(gridMsg);
-  }, 500);
-}
-
-async function flushProviderMessageUpdate(gridMsg) {
-  if (!gridMsg?._providerSeq) return null;
-  if (gridMsg._providerPersistTimer) {
-    window.clearTimeout(gridMsg._providerPersistTimer);
-    gridMsg._providerPersistTimer = null;
-  }
-  const payload = providerMessagePayload(gridMsg);
-  const result = await updatePersistedMessage(gridMsg._providerSeq, payload);
-  if (result?.updated && result.message) {
-    gridMsg._providerData = result.message.data || payload.data;
-    gridMsg._providerContext = gridMsg._providerData.context || gridMsg._providerContext || {};
-  }
-  return result;
-}
-
-function renderProviderCard(result = {}, options = {}) {
-  const card = document.createElement("section");
-  card.className = "provider-card";
-  card.dataset.provider = result.provider || "";
-  const hasText = Boolean(String(result.result || "").trim());
-  const status = result.status || (hasText ? "success" : "partial");
-  const name = result.name || result.provider || "网页模型";
-  const header = document.createElement("header");
-  const strong = document.createElement("strong");
-  strong.textContent = name;
-  const actions = document.createElement("span");
-  actions.className = "provider-actions";
-  const copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.textContent = "复制";
-  copyBtn.title = "复制当前卡片内容";
-  actions.appendChild(copyBtn);
-  const chip = document.createElement("span");
-  chip.className = "status-chip";
-  header.append(strong, actions, chip);
-  card.appendChild(header);
-  updateProviderStatusChip(chip, status);
-  card._providerResult = {
-    provider: result.provider || "",
-    name,
-    status,
-    result: result.result || "",
-    files: result.files || [],
-    original_result: result.original_result || result.result || "",
-    edited: Boolean(result.edited),
-  };
-  if (options.editable) {
-    const input = document.createElement("textarea");
-    input.className = "provider-manual-input";
-    input.placeholder = `${name}回答，可复制或编辑后确认`;
-    input.value = result.result || "";
-    input.addEventListener("input", () => {
-      syncProviderCardResult(card);
-      card._providerResult.status = card._providerResult.result ? "success" : "partial";
-      card._providerResult.edited = card._providerResult.result !== String(card._providerResult.original_result || "").trim();
-      updateProviderStatusChip(chip, card._providerResult.status);
-      scheduleProviderMessageUpdate(card.closest(".message"));
-    });
-    input.addEventListener("change", () => { flushProviderMessageUpdate(card.closest(".message")); });
-    input.addEventListener("blur", () => { flushProviderMessageUpdate(card.closest(".message")); });
-    card.appendChild(input);
-  } else {
-    const pre = document.createElement("pre");
-    pre.textContent = result.result || (options.completed ? "材料已确认并完成融合，原始回答未保存在历史卡片。" : "等待手动粘贴 provider 回答。");
-    card.appendChild(pre);
-  }
-  copyBtn.addEventListener("click", async () => {
-    syncProviderCardResult(card);
-    const text = card._providerResult?.result || "";
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      copyBtn.textContent = "已复制";
-      setTimeout(() => { copyBtn.textContent = "复制"; }, 1200);
-    } catch {
-      const input = card.querySelector(".provider-manual-input");
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    }
-  });
-  return card;
-}
-
-function syncProviderCardResult(card) {
-  if (!card?._providerResult) return null;
-  const input = card.querySelector(".provider-manual-input");
-  const pre = card.querySelector("pre");
-  const text = input ? input.value : pre ? pre.textContent : card._providerResult.result;
-  card._providerResult.result = String(text || "").trim();
-  return card._providerResult;
-}
-
-function updateProviderStatusChip(chip, status) {
-  if (!chip) return;
-  chip.className = `status-chip ${status === "failed" ? "error" : status === "partial" ? "warn" : "ok"}`;
-  chip.textContent = status || "done";
 }
 
 async function loadChatHistory() {
@@ -2750,15 +2470,13 @@ function renderPendingWorkflowRecoveryPrompt(restore = {}) {
   const invocationId = status.invocation_id || pending.invocation_id || "";
   if (!invocationId || status.status !== "running") return;
   const phase = workflowRecoveryPhase(status);
-  if (restore.pendingDraftSeq || restore.pendingProviderSeq || (phase && !(phase === "user_confirm" && workflowCanRecoverDraft(status)))) return;
+  if (restore.pendingDraftSeq || (phase && !(phase === "user_confirm" && workflowCanRecoverDraft(status)))) return;
   if (document.querySelector(`[data-recovery-invocation="${CSS.escape(invocationId)}"]`)) return;
 
   const current = status.current || "";
   const label = stageLabel(current) || current || "未完成流程";
   const message = pending.message || "";
-  const text = workflowPastProviderGate(status)
-    ? `检测到上次任务已越过「确认材料」并停在「${label}」，但未找到可恢复的定稿正文。可以继续当前任务或终止后重新发起。`
-    : `检测到上次任务停在「${label}」。如果是页面中断或刷新导致，可使用保存的任务描述继续。`;
+  const text = `检测到上次任务停在「${label}」。如果是页面中断或刷新导致，可使用保存的任务描述继续。`;
   const ref = addMessage(
     "system",
     text,
@@ -2803,8 +2521,6 @@ function renderPendingWorkflowRecoveryPrompt(restore = {}) {
       task: pending.task || analysis.task || status.task || "generic",
       track: pending.track || status.track || "create",
       novel_id: pending.novel_id || currentProject,
-      login_confirmed: aiToggle.checked ? loginConfirmed() : {},
-      use_provider_source: aiToggle.checked,
       model_preferences: modelPreferences(),
     };
     try {
@@ -2820,7 +2536,6 @@ function renderPendingWorkflowRecoveryPrompt(restore = {}) {
     } finally {
       setBusy(false);
       await loadStatus();
-      await loadCostBoard();
       await loadMission();
       await loadObservability();
     }
@@ -2998,8 +2713,6 @@ async function refreshWorkspacePanels(flow = null) {
   await loadStatus();
   flow?.step("workspace_files");
   await loadFiles();
-  flow?.step("workspace_cost");
-  await loadCostBoard();
   flow?.step("workspace_mission");
   await loadMission();
   flow?.step("workspace_observe");
@@ -3007,16 +2720,7 @@ async function refreshWorkspacePanels(flow = null) {
 }
 
 function stagesForPayload(payload) {
-  const selectedProviders = Object.values(payload.login_confirmed || {}).some(Boolean);
-  const base = workflowStages("draft");
-  if (!payload.use_provider_source || !selectedProviders) return base;
-  const routeIndex = base.indexOf("provider_route");
-  if (routeIndex < 0) return base;
-  return [
-    ...base.slice(0, routeIndex + 1),
-    ...workflowStages("provider"),
-    ...base.slice(routeIndex + 1),
-  ];
+  return workflowStages("draft");
 }
 
 function nextStageAfter(node, stages) {
@@ -3034,7 +2738,20 @@ function nextPendingStageAfter(node, stages, done = new Set()) {
 }
 
 function renderTasks() {
-  if (shortFilmActions) shortFilmActions.hidden = currentKind !== "short_film";
+  const isShortFilm = currentKind === "short_film";
+  const imageReady = hasAvailableImageModel();
+  if (shortFilmActions) shortFilmActions.hidden = !isShortFilm;
+  if (storyboardImagesBtn) {
+    storyboardImagesBtn.disabled = composerBusy || !imageReady;
+    storyboardImagesBtn.title = imageReady
+      ? "生成分镜图片"
+      : "未配置可用生图模型，请先完成生图模型配置";
+  }
+}
+
+function hasAvailableImageModel() {
+  return Array.isArray(modelRegistry.image_models)
+    && modelRegistry.image_models.some((item) => item?.key);
 }
 
 function renderProjectProgress(progress) {
@@ -3615,7 +3332,7 @@ function renderCollaborationIdle() {
   invocationCard.innerHTML = `
     <div><strong>${collaborationState.latest_invocation_id}</strong></div>
     <div class="muted-line">状态：${collaborationState.latest_status || "unknown"}</div>
-    <div class="muted-line">轨迹：${collaborationState.trajectory_count || 0} · 门禁：${collaborationState.harness_count || 0} · 预算：${collaborationState.budget_count || 0}</div>
+    <div class="muted-line">轨迹：${collaborationState.trajectory_count || 0}</div>
     <div class="mini-actions">
       <button type="button" data-load-trajectory="${collaborationState.latest_invocation_id}">轨迹</button>
       <button type="button" data-review-packet="${collaborationState.latest_invocation_id}">Packet</button>
@@ -3625,8 +3342,6 @@ function renderCollaborationIdle() {
     id: collaborationState.latest_invocation_id,
     status: collaborationState.latest_status,
     trajectory: collaborationState.trajectory_count,
-    harness: collaborationState.harness_count,
-    budget: collaborationState.budget_count,
   });
 }
 
@@ -3640,22 +3355,6 @@ async function refreshTaskCenter() {
   } catch (error) {
     invocationCard.textContent = `任务中心加载失败：${error}`;
   }
-}
-
-function renderCostBoard(data) {
-  const summary = data?.summary || {};
-  const latest = (data?.items || [])[0] || {};
-  const route = latest.route || {};
-  costCard.innerHTML = `
-    <div class="metric-grid">
-      <div><strong>${summary.estimated_total_tokens || 0}</strong><span>估算总量</span></div>
-      <div><strong>${summary.average_estimated_tokens || 0}</strong><span>单次均值</span></div>
-      <div><strong>${summary.fanout_routes || 0}</strong><span>Fanout</span></div>
-      <div><strong>${summary.single_agent_routes || 0}</strong><span>单 Agent</span></div>
-    </div>
-    <div class="muted-line">最近：${route.decision || "none"} · ${route.reason || "暂无任务"}</div>
-  `;
-  markStatusTabUpdated("cost", data);
 }
 
 function renderMission(data) {
@@ -3673,26 +3372,6 @@ function renderMission(data) {
       </div>
     ` : ""}
   `;
-}
-
-function renderHarnessSuggestions(data) {
-  const suggestions = data?.suggestions || [];
-  latestHarnessSuggestions = suggestions;
-  const first = suggestions[0] || {};
-  const evidence = (first.evidence || [])[0] || {};
-  const invocationId = evidence.invocation_id || latestInvocationId();
-  harnessCard.innerHTML = `
-    <div><strong>${suggestions.length}</strong> 条候选建议</div>
-    <div class="muted-line">${escapeHtml(first.reason || "近期没有明显门禁改造建议")}</div>
-    <div class="muted-line">验收：先生成复盘包核对证据，再采纳为经验/技能或调整 SOP。</div>
-    ${suggestions.length ? `
-      <div class="mini-actions">
-        ${invocationId ? `<button type="button" data-review-packet="${escapeHtml(invocationId)}">生成复盘</button>` : ""}
-        <button type="button" data-status-tab="lessons">查看经验</button>
-      </div>
-    ` : ""}
-  `;
-  markStatusTabUpdated("harness", data);
 }
 
 function renderTrajectory(data) {
@@ -3720,7 +3399,7 @@ function renderReviewPacket(data) {
   const path = data?.path || "";
   reviewPacketCard.innerHTML = `
     <div><strong>${escapeHtml(inv.id || latestInvocationId() || "无任务")}</strong></div>
-    <div class="muted-line">验收项：${(packet.acceptance_checklist || []).length} · 门禁：${(packet.harness_issues || []).length}</div>
+    <div class="muted-line">验收项：${(packet.acceptance_checklist || []).length}</div>
     <div class="muted-line">首项：${escapeHtml(checklist[0] || "暂无验收项")}</div>
     <div class="observe-path" title="${escapeHtml(path || "未生成文件")}">${escapeHtml(path || "未生成文件")}</div>
     <div class="mini-actions">
@@ -3736,7 +3415,7 @@ function renderRecallEval(data) {
   recallCard.innerHTML = `
     <div class="metric-grid">
       <div><strong>${summary.average_proxy_score || 0}</strong><span>复用代理分</span></div>
-      <div><strong>${summary.with_merge || 0}</strong><span>融合痕迹</span></div>
+      <div><strong>${summary.with_draft_artifact || 0}</strong><span>草稿产物</span></div>
     </div>
     <div class="muted-line">completed ${summary.completed || 0}/${summary.invocations || 0} · 非语义真值评分</div>
   `;
@@ -3799,30 +3478,6 @@ function renderWiki(data, projectData = null) {
     <div class="muted-line">项目过程：${escapeHtml(projectFirst.title || "暂无")}</div>
   `;
   markStatusTabUpdated("wiki", { data, projectData });
-}
-
-function renderProviders() {
-  providerChecks.innerHTML = "";
-  const prefs = loadProviderPrefs();
-  for (const p of providers) {
-    const checked = prefs[p.id] === true;
-    const pill = document.createElement("div");
-    pill.className = "provider-pill provider-control";
-    pill.title = p.reason || "";
-    pill.innerHTML = `
-      <label class="provider-check">
-        <input type="checkbox" data-provider="${p.id}" ${checked ? "checked" : ""}>
-        <span>${p.name}${p.pinned_conversation ? " 📌" : ""}</span>
-      </label>
-      <span class="provider-actions">
-        <button type="button" data-open-provider="${p.id}">打开</button>
-        <button type="button" data-pin-provider="${p.id}">固定</button>
-        <button type="button" data-reset-provider="${p.id}">重置</button>
-      </span>
-    `;
-    providerChecks.appendChild(pill);
-  }
-  syncAiToggleFromProviders();
 }
 
 function renderFileTree(node, root = fileTreeEl, depth = 0) {
@@ -3944,7 +3599,7 @@ async function createProject() {
   }
   setBusy(true, "创建项目");
   setProjectActionStatus("正在创建项目...");
-  const flow = createOperationFlow(["project_submit", "project_create", "project_reload", "workspace_status", "workspace_files", "workspace_cost", "workspace_mission", "workspace_observe", "workspace_history"]);
+  const flow = createOperationFlow(["project_submit", "project_create", "project_reload", "workspace_status", "workspace_files", "workspace_mission", "workspace_observe", "workspace_history"]);
   try {
     flow.step("project_create");
     const res = await fetch("/api/writing/project", {
@@ -3982,7 +3637,7 @@ async function deleteCurrentProject() {
   setBusy(true, "删除项目");
   setProjectActionStatus(`正在删除项目 ${currentProject}...`);
   const deletingProject = currentProject;
-  const flow = createOperationFlow(["project_submit", "project_delete", "project_reload", "workspace_status", "workspace_files", "workspace_cost", "workspace_mission", "workspace_observe", "workspace_history"]);
+  const flow = createOperationFlow(["project_submit", "project_delete", "project_reload", "workspace_status", "workspace_files", "workspace_mission", "workspace_observe", "workspace_history"]);
   try {
     flow.step("project_delete");
     const res = await fetch(`/api/writing/project/${encodeURIComponent(deletingProject)}`, {
@@ -4009,25 +3664,6 @@ async function deleteCurrentProject() {
   }
 }
 
-async function loadProviders() {
-  const res = await fetch("/api/ai-providers/status");
-  const data = await readJsonResponse(res);
-  assertApiOk(res, data, "网页模型状态加载失败");
-  providers = data.providers || [];
-  renderProviders();
-}
-
-async function loadCostBoard() {
-  try {
-    const res = await fetch(`/api/writing/cost-board?novel_id=${encodeURIComponent(currentProject)}&limit=20`);
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "成本看板加载失败");
-    renderCostBoard(data);
-  } catch {
-    costCard.textContent = "成本看板加载失败";
-  }
-}
-
 async function loadMission() {
   try {
     const res = await fetch(`/api/writing/mission?novel_id=${encodeURIComponent(currentProject)}&limit=10`);
@@ -4036,17 +3672,6 @@ async function loadMission() {
     renderMission(data);
   } catch {
     missionCard.textContent = "任务概览加载失败";
-  }
-}
-
-async function loadHarnessSuggestions() {
-  try {
-    const res = await fetch(`/api/writing/harness-suggestions?novel_id=${encodeURIComponent(currentProject)}&limit=20`);
-    const data = await readJsonResponse(res);
-    assertApiOk(res, data, "门禁建议加载失败");
-    renderHarnessSuggestions(data);
-  } catch {
-    harnessCard.textContent = "门禁建议加载失败";
   }
 }
 
@@ -4193,7 +3818,6 @@ async function loadWiki() {
 
 async function loadObservability() {
   await Promise.allSettled([
-    loadHarnessSuggestions(),
     loadTrajectory(),
     loadRecallEval(),
     loadSkillsRegistry(),
@@ -4365,368 +3989,6 @@ async function runStoryboardImages() {
   });
 }
 
-function buildProviderGrid(order) {
-  const wrap = document.createElement("article");
-  wrap.className = "message assistant";
-  const title = document.createElement("div");
-  title.className = "message-title";
-  title.textContent = "网页模型协同";
-  wrap.appendChild(title);
-  const grid = document.createElement("div");
-  grid.className = "provider-card-grid";
-  wrap.appendChild(grid);
-  wrap._grid = grid;
-  wrap._cards = {};
-  for (const pid of order) {
-    const card = renderProviderCard({
-      provider: pid,
-      name: providerName(pid),
-      status: "running",
-      result: "",
-    }, { editable: true });
-    grid.appendChild(card);
-    wrap._cards[pid] = card;
-  }
-  messagesEl.appendChild(wrap);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return wrap;
-}
-
-function providerName(id) {
-  return (providers.find((p) => p.id === id) || { name: id }).name;
-}
-
-function updateProviderGrid(gridMsg, data) {
-  const card = gridMsg?._cards?.[data.provider];
-  if (!card) return;
-  const status = card.querySelector(".status-chip");
-  const input = card.querySelector(".provider-manual-input");
-  const pre = card.querySelector("pre");
-  updateProviderStatusChip(status, data.status || "success");
-  const userEditing = input && document.activeElement === input;
-  if (input && !userEditing) input.value = data.result || "";
-  if (pre) pre.textContent = data.result || "无正文";
-  const currentText = userEditing ? input.value : data.result || "";
-  card._providerResult = {
-    provider: data.provider,
-    name: data.name || providerName(data.provider),
-    status: data.status || "success",
-    result: currentText,
-    original_result: data.result || "",
-    edited: userEditing && String(currentText || "").trim() !== String(data.result || "").trim(),
-    files: [],
-  };
-  scrollMessagesToBottom();
-}
-
-function confirmedAnswers(gridMsg) {
-  return Object.values(gridMsg?._cards || {})
-    .map((card) => {
-      const result = syncProviderCardResult(card);
-      if (result) {
-        result.status = result.result ? "success" : "partial";
-        result.edited = result.result !== String(result.original_result || "").trim();
-      }
-      return result;
-    })
-    .filter((item) => item && item.result && item.status !== "failed")
-    .map((item) => ({
-      provider: item.provider,
-      name: item.name,
-      status: item.status,
-      result: item.result,
-      files: item.files || [],
-      edited: Boolean(item.edited),
-      original_result: "",
-    }));
-}
-
-async function persistProviderMaterials(gridMsg, ctx = {}) {
-  const answers = confirmedAnswers(gridMsg);
-  if (!answers.length || gridMsg?._providerPersisted) return;
-  gridMsg._providerPersisted = true;
-  const payload = {
-    role: "assistant",
-    kind: "provider",
-    meta: "网页模型协同",
-    track: ctx.track || "create",
-    data: {
-      ok: true,
-      awaiting_provider_confirm: true,
-      message: "网页模型协同结果",
-      results: answers,
-      context: {
-        chapter: ctx.chapter || null,
-        task: ctx.task || flowTask(),
-        track: ctx.track || "create",
-        novel_id: ctx.novel_id || currentProject,
-        project_kind: ctx.project_kind || currentKind,
-        checkpoint_id: ctx.checkpoint_id || "",
-        invocation_id: ctx.invocation_id || "",
-        request_analysis: ctx.request_analysis || {},
-        archive_content: ctx.archive_content || "",
-        model_preferences: ctx.model_preferences || modelPreferences(),
-      },
-    },
-  };
-  const saved = await persistMessage(payload);
-  if (saved?.seq) {
-    gridMsg._providerSeq = Number(saved.seq || 0);
-    gridMsg._providerData = saved.data || payload.data;
-    gridMsg._providerContext = gridMsg._providerData.context || payload.data.context || {};
-  }
-}
-
-function attachProviderGate(gridMsg, ctx, flow = {}) {
-  if (!gridMsg || gridMsg._gate) return;
-  const row = document.createElement("div");
-  row.className = "confirm-row";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "button primary";
-  btn.textContent = "确认材料并继续融合";
-  const note = document.createElement("span");
-  note.className = "muted-line";
-  note.textContent = "将所有成功 provider 结果作为确认材料。";
-  row.append(btn, note);
-  const progress = createAcceptanceProgress(row, note);
-  gridMsg.appendChild(row);
-  gridMsg._gate = row;
-  async function confirmProviderMaterials() {
-    await flushProviderMessageUpdate(gridMsg);
-    const answers = confirmedAnswers(gridMsg);
-    if (!answers.length) {
-      note.textContent = "没有可确认的 provider 回答。";
-      return;
-    }
-    if (!requireModels(["writing", "review"], {
-      label: "已选择模型，继续融合",
-      retry: () => confirmProviderMaterials(),
-    })) return;
-    btn.disabled = true;
-    progress.mount();
-    const activeFlow = flow?.timer ? flow : createOperationFlow(workflowStages("provider_confirm"));
-    applyFlowProgress(activeFlow, { stage: "provider_confirm_gate", status: "running" });
-    schedulePendingWorkflowPersist(workflowSnapshotFromFlow(activeFlow, {
-      invocation_id: ctx.invocation_id || "",
-      task: ctx.task,
-      chapter: ctx.chapter,
-      track: ctx.track || "create",
-      status: "running",
-      source: "provider_confirm",
-    }), true);
-    let data = {};
-    let fusedTextStream = "";
-    let fusedMsg = null;
-    let fusedWriter = null;
-    try {
-      note.textContent = "确认材料...";
-      const res = await fetch("/api/writing/provider-confirm-stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...ctx, model_preferences: modelPreferences(), answers }),
-      });
-      if (!res.ok || !res.body) {
-        const errorData = await readJsonResponse(res);
-        throw new Error(errorData.detail || errorData.error || "融合状态流不可用");
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const blocks = buf.split("\n\n");
-        buf = blocks.pop() || "";
-        for (const block of blocks) {
-          const ev = parseSSE(block);
-          if (!ev) continue;
-          if (ev.event === "progress") {
-            const stage = ev.data?.stage || "";
-            const status = ev.data?.status || "";
-            const shouldDelayDone = status === "done" && ["provider_merge", "generate", "draft_finalize"].includes(stage);
-            if (!shouldDelayDone) {
-              applyFlowProgress(activeFlow, ev.data || {});
-            } else if (activeFlow?.timer?.current !== stage && !activeFlow.doneNodes?.has(stage)) {
-              applyFlowProgress(activeFlow, { ...(ev.data || {}), status: "running" });
-            }
-            schedulePendingWorkflowPersist(workflowSnapshotFromFlow(activeFlow, {
-              invocation_id: ctx.invocation_id || "",
-              task: ctx.task,
-              chapter: ctx.chapter,
-              track: ctx.track || "create",
-              status: ev.data?.status === "done" && ev.data?.stage === "draft_finalize" ? "awaiting_confirm" : "running",
-              source: "provider_confirm",
-            }));
-            const label = ev.data?.label || stageLabel(ev.data?.stage || "");
-            const details = ev.data?.details || {};
-            if (ev.data?.stage === "provider_digest" && details.current && details.total) {
-              note.textContent = `${label} ${details.current}/${details.total}...`;
-            } else if (label) {
-              note.textContent = ev.data?.status === "done" ? `${label}完成` : `${label}...`;
-            }
-          } else if (ev.event === "token") {
-            const chunk = ev.data?.text || "";
-            if (!chunk) continue;
-            fusedTextStream += chunk;
-            if (!fusedMsg) {
-              fusedMsg = addMessage("assistant", "", "融合稿", { persist: false });
-              fusedWriter = createTypewriter(fusedMsg.body);
-            }
-            fusedWriter?.append(chunk);
-          } else if (ev.event === "done") {
-            data = ev.data || {};
-          } else if (ev.event === "error") {
-            throw new Error(ev.data?.message || "融合失败");
-          }
-        }
-      }
-      if (fusedWriter) await fusedWriter.drain();
-      if (!data || data.ok === false) {
-        throw new Error(data.detail || data.error || "融合失败");
-      }
-    } catch (error) {
-      note.textContent = `融合失败：${error}`;
-      progress.fail(note.textContent);
-      activeFlow.fail?.();
-      btn.disabled = false;
-      offerModelRetry(error, () => confirmProviderMaterials(), {
-        roles: ["writing", "review"],
-        label: "已切换模型，继续融合",
-      });
-      return;
-    }
-    note.textContent = "已融合";
-    progress.complete("已融合");
-    const finalText = cleanFinalDraftText(data.answer || data.data?.draft || "");
-    let fusedText = finalText || fusedTextStream;
-    if (!fusedText) {
-      addMessage("system", "融合完成，但没有收到可供确认的正文内容。", "用户确认");
-      return;
-    }
-    if (!fusedMsg) {
-      fusedMsg = addMessage("assistant", "", "融合稿", { persist: false });
-      fusedWriter = createTypewriter(fusedMsg.body);
-      fusedWriter.append(fusedText);
-      await fusedWriter.drain();
-    } else if (!fusedTextStream && finalText) {
-      fusedWriter?.setText(finalText);
-      await fusedWriter?.drain();
-    }
-    if (finalText && finalText !== fusedTextStream && fusedMsg?.body) {
-      fusedWriter?.flush?.();
-      fusedMsg.body.textContent = finalText;
-      fusedText = finalText;
-      scrollMessagesToBottom();
-    }
-    finishProviderTextStages(activeFlow);
-    startUserConfirmStage(activeFlow);
-    schedulePendingWorkflowPersist(workflowSnapshotFromFlow(activeFlow, {
-      invocation_id: data.data?.invocation_id || ctx.invocation_id || "",
-      task: data.data?.task || ctx.task,
-      chapter: data.data?.chapter || ctx.chapter,
-      track: ctx.track || "create",
-      status: "awaiting_confirm",
-      source: "provider_confirm",
-    }), true);
-    const draftCtx = {
-      original: fusedText,
-      chapter: data.data?.chapter || ctx.chapter,
-      task: data.data?.task || ctx.task,
-      track: ctx.track,
-      novel_id: ctx.novel_id,
-      project_kind: data.data?.project_kind || ctx.project_kind || currentKind,
-      invocation_id: data.data?.invocation_id || ctx.invocation_id || "",
-      request_analysis: data.data?.request_analysis || ctx.request_analysis || {},
-      archive_content: data.data?.archive_content || ctx.archive_content || "",
-      provider_answers: data.data?.provider_answers || answers,
-      artifacts: data.data?.artifacts || {},
-      merge_info: data.data?.merge_info || {},
-      model_preferences: modelPreferences(),
-    };
-    rememberFlowTask(draftCtx, draftCtx.request_analysis);
-    await persistDraftResult(fusedText, "融合稿", draftCtx);
-    attachAcceptanceControls(fusedMsg, {
-      ...draftCtx,
-      original: fusedText,
-    }, activeFlow);
-    invocationCard.textContent = data.data?.invocation_log || ctx.invocation_id || "已完成";
-    scrollMessagesToBottom();
-  }
-  btn.addEventListener("click", confirmProviderMaterials);
-}
-
-async function runProviderPlainChat(message) {
-  const login = loginConfirmed();
-  const selected = Object.keys(login).filter((key) => login[key]);
-  if (!selected.length) {
-    addMessage("system", "已开启网页模型，但未选择 provider。请先勾选千问、DeepSeek 或豆包。", "聊天");
-    return;
-  }
-  setBusy(true, "网页模型聊天");
-  const flow = createOperationFlow(["provider_launch", "provider_wait", "provider_persist"]);
-  const gridMsg = buildProviderGrid(selected);
-  try {
-    flow.step("provider_launch");
-    const startRes = await fetch("/api/ai-providers/run-async", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        mode: "chat",
-        chapter: null,
-        attachments: [],
-        login_confirmed: login,
-        format_for_writing: false,
-        novel_id: currentProject,
-      }),
-    });
-    const started = await readJsonResponse(startRes);
-    if (!startRes.ok || !started.ok || !started.job_id) {
-      throw new Error(started.detail || started.message || "网页模型任务启动失败");
-    }
-    const seen = new Set();
-    flow.step("provider_wait");
-    while (true) {
-      const res = await fetch(`/api/ai-providers/job/${encodeURIComponent(started.job_id)}`);
-      const snapshot = await readJsonResponse(res);
-      assertApiOk(res, snapshot, "网页模型任务状态读取失败");
-      for (const item of snapshot.providers || []) {
-        const status = item.status;
-        if (["success", "partial", "failed"].includes(status) && !seen.has(item.provider)) {
-          seen.add(item.provider);
-          updateProviderGrid(gridMsg, {
-            provider: item.provider,
-            name: item.name,
-            status,
-            result: item.result || "",
-          });
-        }
-      }
-      if (snapshot.done) break;
-      await new Promise((resolve) => setTimeout(resolve, 900));
-    }
-    flow.step("provider_persist");
-    await persistMessage({
-      role: "assistant",
-      kind: "provider",
-      data: {
-        ok: true,
-        message: "网页模型聊天结果",
-        results: confirmedAnswers(gridMsg),
-      },
-      track: "normal",
-    });
-    flow.done();
-  } catch (error) {
-    flow.fail();
-    addMessage("system", `网页模型聊天失败：${error}`, "聊天");
-  } finally {
-    setBusy(false);
-  }
-}
-
 async function runPlainChatMessage(message, options = {}) {
   message = promptText(message);
   if (!message) {
@@ -4741,10 +4003,6 @@ async function runPlainChatMessage(message, options = {}) {
   if (options.clearInput !== false && promptText() === message) {
     messageInput.value = "";
     updateComposerButtons();
-  }
-  if (aiToggle.checked) {
-    await runProviderPlainChat(message);
-    return;
   }
   setBusy(true, "聊天中");
   const flow = createOperationFlow(["chat_submit", "chat_model", "chat_persist"]);
@@ -4784,7 +4042,7 @@ async function runPlainChat() {
     updateComposerButtons();
     return;
   }
-  if (!aiToggle.checked && !requireModels(["chat"], {
+  if (!requireModels(["chat"], {
     label: "已选择模型，继续聊天",
     retry: () => runPlainChatMessage(message, { echoUser: true, clearInput: true }),
   })) return;
@@ -4808,20 +4066,6 @@ function startUserConfirmStage(flow) {
   flow.timer.totalMs = null;
   markStageStarted(flow.timer, "user_confirm");
   renderStages("user_confirm", flow.doneNodes || new Set(), flow.stages || workflowStages("draft"), flow.timer);
-}
-
-function finishProviderTextStages(flow) {
-  if (!flow?.timer) return;
-  for (const stage of ["provider_digest", "provider_merge", "generate"]) {
-    if ((flow.stages || []).includes(stage)) {
-      markStageDone(flow.timer, stage);
-      flow.doneNodes?.add(stage);
-    }
-  }
-  if ((flow.stages || []).includes("draft_finalize")) {
-    markStageDone(flow.timer, "draft_finalize");
-    flow.doneNodes?.add("draft_finalize");
-  }
 }
 
 function renderImpactPlan(msgEl, data) {
@@ -5342,7 +4586,6 @@ async function runDraftStream(payload) {
   let draft = "";
   let draftMsg = null;
   let draftWriter = null;
-  let providerGrid = null;
   let doneData = null;
   let keepTimerRunning = false;
   let streamFailed = false;
@@ -5381,20 +4624,6 @@ async function runDraftStream(payload) {
           status: "running",
           source: "draft_stream",
         }), true);
-      } else if (ev.event === "provider") {
-        if (ev.data.type === "provider_init") {
-          applyFlowProgress({ timer, doneNodes, stages }, { stage: "provider_fanout", status: "running" });
-          schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
-            invocation_id: invocationId,
-            task: payload.task,
-            chapter: payload.chapter,
-            track: payload.track,
-            status: "running",
-            source: "draft_stream_provider",
-          }), true);
-          providerGrid = buildProviderGrid(ev.data.order || []);
-        }
-        if (ev.data.type === "provider") updateProviderGrid(providerGrid, ev.data);
       } else if (ev.event === "stage") {
         applyFlowProgress({ timer, doneNodes, stages }, ev.data || {});
         schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
@@ -5408,24 +4637,17 @@ async function runDraftStream(payload) {
       } else if (ev.event === "node") {
         const node = ev.data.node;
         rememberFlowTask(ev.data.request_analysis);
-        if (node === "provider_confirm_gate") {
-          doneNodes.delete("provider_confirm_gate");
-          timer.durations.delete("provider_confirm_gate");
-          markStageStarted(timer, "provider_confirm_gate");
-          renderStages("provider_confirm_gate", doneNodes, stages, timer);
-        } else {
-          markStageDone(timer, node);
-          doneNodes.add(node);
-          const next = nextPendingStageAfter(node, stages, doneNodes);
-          markStageStarted(timer, next);
-          renderStages(next, doneNodes, stages, timer);
-        }
+        markStageDone(timer, node);
+        doneNodes.add(node);
+        const next = nextPendingStageAfter(node, stages, doneNodes);
+        markStageStarted(timer, next);
+        renderStages(next, doneNodes, stages, timer);
         schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
           invocation_id: invocationId,
           task: payload.task,
           chapter: payload.chapter,
           track: payload.track,
-          status: node === "provider_confirm_gate" ? "awaiting_confirm" : "running",
+          status: "running",
           source: "draft_stream",
         }));
       } else if (ev.event === "token") {
@@ -5460,36 +4682,7 @@ async function runDraftStream(payload) {
       },
     };
   }
-  if (doneData?.data?.awaiting_provider_confirm) {
-    rememberFlowTask(doneData.data, doneData.data.request_analysis);
-    keepTimerRunning = true;
-    doneNodes.delete("provider_confirm_gate");
-    timer.durations.delete("provider_confirm_gate");
-    markStageStarted(timer, "provider_confirm_gate");
-    renderStages("provider_confirm_gate", doneNodes, stages, timer);
-    schedulePendingWorkflowPersist(workflowSnapshotFromTimer(stages, doneNodes, timer, {
-      invocation_id: invocationId || doneData.data.invocation_id || "",
-      task: doneData.data.task || payload.task,
-      chapter: doneData.data.chapter || payload.chapter,
-      track: payload.track,
-      status: "awaiting_confirm",
-      source: "draft_stream",
-    }), true);
-    const providerCtx = {
-      chapter: doneData.data.chapter || payload.chapter,
-      task: doneData.data.task || payload.task,
-      track: payload.track,
-      novel_id: payload.novel_id,
-      project_kind: doneData.data.project_kind || currentKind,
-      checkpoint_id: doneData.data.checkpoint_id || "",
-      invocation_id: doneData.data.invocation_id || "",
-      request_analysis: doneData.data.request_analysis || {},
-      archive_content: doneData.data.archive_content || "",
-      model_preferences: modelPreferences(),
-    };
-    await persistProviderMaterials(providerGrid, providerCtx);
-    attachProviderGate(providerGrid, providerCtx, { timer, doneNodes, stages });
-  } else if (doneData) {
+  if (doneData) {
     const text = cleanFinalDraftText(extractDraftText(doneData, draft));
     const draftCtx = {
       original: text,
@@ -5501,7 +4694,6 @@ async function runDraftStream(payload) {
       invocation_id: doneData.data?.invocation_id || "",
       request_analysis: doneData.data?.request_analysis || {},
       archive_content: doneData.data?.archive_content || "",
-      provider_answers: doneData.data?.provider_answers || [],
       artifacts: doneData.data?.artifacts || {},
       merge_info: doneData.data?.merge_info || {},
       model_preferences: modelPreferences(),
@@ -5643,7 +4835,6 @@ function renderUpgradeCard(data = {}) {
 
 function upgradeBlockerText(item = {}) {
   const labels = {
-    provider_job: "网页模型任务",
     invocation: "创作任务",
     pending_intent: "待恢复任务",
     workflow_status: "流程状态",
@@ -5764,7 +4955,9 @@ async function runDoctor() {
     flow.step("doctor_check");
     const res = await fetch(`/api/writing/doctor?novel_id=${encodeURIComponent(currentProject)}`);
     const data = await readJsonResponse(res);
-    assertApiOk(res, data, "诊断失败");
+    if (!res.ok || !Array.isArray(data.checks)) {
+      throw new Error(data.detail || data.error || "诊断接口返回异常");
+    }
     flow.step("doctor_render");
     const item = document.createElement("article");
     item.className = "message assistant";
@@ -5890,8 +5083,6 @@ composer.addEventListener("submit", async (event) => {
     task: "generic",
     track: "create",
     novel_id: currentProject,
-    login_confirmed: aiToggle.checked ? loginConfirmed() : {},
-    use_provider_source: aiToggle.checked,
     model_preferences: modelPreferences(),
   };
   try {
@@ -5901,7 +5092,6 @@ composer.addEventListener("submit", async (event) => {
   } finally {
     setBusy(false);
     await loadStatus();
-    await loadCostBoard();
     await loadMission();
     await loadObservability();
   }
@@ -5910,7 +5100,7 @@ composer.addEventListener("submit", async (event) => {
 projectSelect.addEventListener("change", async () => {
   currentProject = projectSelect.value;
   setProjectActionStatus("");
-  const flow = createOperationFlow(["project_reload", "workspace_status", "workspace_files", "workspace_cost", "workspace_mission", "workspace_observe", "workspace_history"]);
+  const flow = createOperationFlow(["project_reload", "workspace_status", "workspace_files", "workspace_mission", "workspace_observe", "workspace_history"]);
   try {
     await reloadProjectWorkspace({ flow });
     flow.done();
@@ -5989,18 +5179,10 @@ if (visualPromptBtn) {
 if (storyboardImagesBtn) {
   storyboardImagesBtn.addEventListener("click", runStoryboardImages);
 }
-aiToggle.addEventListener("change", () => {
-  saveBoolPref(AI_TOGGLE_KEY, aiToggle.checked);
-});
-providerChecks.addEventListener("change", (event) => {
-  const input = event.target.closest("[data-provider]");
-  if (!input) return;
-  saveProviderPref(input.dataset.provider, input.checked);
-  syncAiToggleFromProviders();
-});
 for (const [role, select] of [["chat", chatModelSelect], ["writing", writingModelSelect], ["review", reviewModelSelect], ["image", imageModelSelect]]) {
   select?.addEventListener("change", () => saveModelPref(role, select.value));
 }
+modelCheckBtn?.addEventListener("click", checkModelsConnectivity);
 fileEditorText.addEventListener("input", () => {
   if (!activeFile) return;
   activeFile.content = fileEditorText.value;
@@ -6070,83 +5252,6 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
-  const openBtn = event.target.closest("[data-open-provider]");
-  if (openBtn) {
-    const provider = openBtn.dataset.openProvider;
-    setBusy(true, `打开 ${providerDisplayName(provider)}`);
-    const flow = createOperationFlow(["provider_open", "provider_refresh"], { silent: true });
-    try {
-      flow.step("provider_open");
-      const res = await fetch(`/api/ai-providers/${provider}/open`, { method: "POST" });
-      const data = await readJsonResponse(res);
-      if (!res.ok || data.ok === false) {
-        addMessage("system", data.detail || data.result || `打开 ${providerDisplayName(provider)} 失败`, "网页模型");
-      } else {
-        const pinnedNote = data.pinned ? `已续用固定会话：${data.pinned}` : "未固定会话，当前为新建对话页";
-        addMessage("system", `${data.name || providerDisplayName(provider)} 已在可见浏览器窗口打开。${pinnedNote}。登录后勾选即可。`, data.profile || "网页模型");
-      }
-      flow.step("provider_refresh");
-      await loadProviders();
-      flow.done();
-    } catch (error) {
-      flow.fail();
-      addMessage("system", `打开 ${providerDisplayName(provider)} 失败：${error}`, "网页模型");
-    } finally {
-      setBusy(false);
-    }
-    return;
-  }
-
-  const pinBtn = event.target.closest("[data-pin-provider]");
-  if (pinBtn) {
-    const provider = pinBtn.dataset.pinProvider;
-    setBusy(true, `固定 ${providerDisplayName(provider)} 会话`);
-    const flow = createOperationFlow(["provider_pin", "provider_refresh"], { silent: true });
-    try {
-      flow.step("provider_pin");
-      const res = await fetch(`/api/ai-providers/${provider}/pin`, { method: "POST" });
-      const data = await readJsonResponse(res);
-      if (!res.ok || data.ok === false) {
-        throw new Error(data.detail || data.error || data.result || "固定会话失败");
-      }
-      addMessage("system", data.result || (data.ok ? "已固定会话" : "固定失败"), data.url || "网页模型");
-      flow.step("provider_refresh");
-      await loadProviders();
-      flow.done();
-    } catch (error) {
-      flow.fail();
-      addMessage("system", `固定 ${providerDisplayName(provider)} 会话失败：${error}`, "网页模型");
-    } finally {
-      setBusy(false);
-    }
-    return;
-  }
-
-  const resetBtn = event.target.closest("[data-reset-provider]");
-  if (resetBtn) {
-    const provider = resetBtn.dataset.resetProvider;
-    setBusy(true, `重置 ${providerDisplayName(provider)} 会话`);
-    const flow = createOperationFlow(["provider_reset", "provider_refresh"], { silent: true });
-    try {
-      flow.step("provider_reset");
-      const res = await fetch(`/api/ai-providers/${provider}/reset-conversation`, { method: "POST" });
-      const data = await readJsonResponse(res);
-      if (!res.ok || data.ok === false) {
-        throw new Error(data.detail || data.error || data.result || "重置会话失败");
-      }
-      addMessage("system", data.result || "已重置会话", "网页模型");
-      flow.step("provider_refresh");
-      await loadProviders();
-      flow.done();
-    } catch (error) {
-      flow.fail();
-      addMessage("system", `重置 ${providerDisplayName(provider)} 会话失败：${error}`, "网页模型");
-    } finally {
-      setBusy(false);
-    }
-    return;
-  }
-
   const trajectoryBtn = event.target.closest("[data-load-trajectory]");
   if (trajectoryBtn) {
     const flow = createOperationFlow(["trajectory_load"], { silent: true });
@@ -6208,13 +5313,34 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
-Promise.all([loadWorkflowStages(), loadModels(), loadStatus(), loadProviders()])
-  .then(loadFiles)
-  .then(loadCostBoard)
-  .then(loadMission)
-  .then(loadObservability)
-  .then(loadPendingWorkflowStatus)
-  .then(loadChatHistory)
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginSubmit.disabled = true;
+  loginError.textContent = "";
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: loginUsername.value.trim(), password: loginPassword.value }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.detail || "登录失败");
+    loginPassword.value = "";
+    await bootstrapWorkspace();
+  } catch (error) {
+    showAuthGate(String(error.message || error));
+  } finally {
+    loginSubmit.disabled = false;
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  authState = { authenticated: false, user: null, projects: [] };
+  showAuthGate("已退出登录");
+});
+
+bootstrapWorkspace()
   .catch((error) => {
     setProjectActionStatus(`工作台初始化失败：${error}`, "error");
     addMessage("system", `工作台初始化失败：${error}`, "启动");

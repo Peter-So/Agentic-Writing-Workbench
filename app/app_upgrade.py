@@ -83,7 +83,6 @@ def upgrade_status() -> dict[str, Any]:
 
 def active_task_report() -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
-    blockers.extend(_active_provider_jobs())
     blockers.extend(_active_invocations())
     blockers.extend(_active_pending_intents())
     return {
@@ -212,33 +211,6 @@ def _latest_release() -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except OSError as exc:
         raise RuntimeError(f"检查 GitHub Release 失败：{exc}") from exc
-
-
-def _active_provider_jobs() -> list[dict[str, Any]]:
-    try:
-        from app.ai_provider_jobs import jobs
-
-        return [
-            {
-                "type": "provider_job",
-                "id": item.get("job_id", ""),
-                "status": "running" if any(
-                    provider.get("status") == "running" for provider in item.get("providers") or []
-                ) else "queued",
-                "message": "网页 provider 协同任务未完成",
-                "providers": [
-                    {
-                        "provider": provider.get("provider", ""),
-                        "status": provider.get("status", ""),
-                    }
-                    for provider in item.get("providers") or []
-                    if provider.get("status") in {"queued", "running"}
-                ],
-            }
-            for item in jobs.active_jobs()
-        ]
-    except Exception:
-        return []
 
 
 def _active_invocations() -> list[dict[str, Any]]:

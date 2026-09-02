@@ -13,22 +13,8 @@ STAGE_PRESETS: dict[str, list[str]] = {
     "draft": [
         "request_analyze", "need_audit", "draft_assemble",
         "creative_state", "methodology_context", "creative_enhancements",
-        "material_profile", "context_broker", "prompt_refine", "provider_route", "generate", "pre_review",
+        "material_profile", "context_broker", "generate", "pre_review",
         "model_review", "draft_finalize", "user_confirm",
-    ],
-    "provider": [
-        "provider_fanout", "provider_confirm_gate", "provider_consensus",
-        "provider_digest", "provider_merge",
-    ],
-    "followup": [
-        "request_analyze", "need_audit", "context_followup", "provider_route",
-        "generate", "pre_review", "model_review", "draft_finalize",
-        "user_confirm",
-    ],
-    "provider_confirm": [
-        "provider_confirm_gate", "provider_consensus", "provider_digest",
-        "provider_merge", "generate", "pre_review", "model_review",
-        "draft_finalize", "user_confirm",
     ],
     "intervention": [
         "submit", "memory_lookup", "llm_analysis", "knowledge_settle",
@@ -50,21 +36,13 @@ STAGE_PRESETS: dict[str, list[str]] = {
 STAGE_LABELS: dict[str, str] = {
     "request_analyze": "请求理解",
     "need_audit": "需求审计",
-    "context_followup": "上下文续问",
     "draft_assemble": "材料装配",
     "creative_state": "状态卡/伏笔",
     "methodology_context": "方法论匹配",
     "creative_enhancements": "增强卡片",
     "material_profile": "阶段裁剪",
     "context_broker": "上下文调度",
-    "prompt_refine": "专业提问",
-    "provider_route": "路由决策",
-    "provider_fanout": "网页模型",
-    "provider_confirm_gate": "确认材料",
-    "provider_consensus": "共识归纳",
-    "provider_digest": "多维评分",
-    "provider_merge": "融合生成",
-    "generate": "融合成稿",
+    "generate": "生成成稿",
     "pre_review": "规则预审",
     "model_review": "模型审查",
     "draft_finalize": "定稿",
@@ -102,15 +80,8 @@ def stage_preset(name: str) -> list[str]:
     return list(STAGE_PRESETS.get(name) or STAGE_PRESETS["draft"])
 
 
-def draft_stages(*, use_provider_source: bool = False, selected_provider: bool = False,
-                 followup: bool = False) -> list[str]:
-    base = stage_preset("followup" if followup else "draft")
-    if not (use_provider_source and selected_provider):
-        return base
-    route_index = base.index("provider_route") if "provider_route" in base else -1
-    if route_index < 0:
-        return base
-    return [*base[:route_index + 1], *stage_preset("provider"), *base[route_index + 1:]]
+def draft_stages() -> list[str]:
+    return stage_preset("draft")
 
 
 def workflow_snapshot(
@@ -155,9 +126,14 @@ def normalize_workflow_status(status: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(status, dict):
         return {}
     out = dict(status)
-    stages = [str(item or "").strip() for item in out.get("stages") or [] if str(item or "").strip()]
-    if "provider_confirm_gate" in stages and "request_analyze" not in stages:
-        stages = draft_stages(use_provider_source=True, selected_provider=True)
+    active_stages = {node for preset in STAGE_PRESETS.values() for node in preset}
+    stages = [
+        str(item or "").strip()
+        for item in out.get("stages") or []
+        if str(item or "").strip() and str(item or "").strip() in active_stages
+    ]
+    if not stages:
+        stages = draft_stages()
     stages = _normalize_stage_order(stages)
     done = [str(item or "").strip() for item in out.get("done") or [] if str(item or "").strip()]
     current = str(out.get("current") or "").strip()
@@ -168,19 +144,8 @@ def normalize_workflow_status(status: dict[str, Any]) -> dict[str, Any]:
         if isinstance(durations, dict):
             durations.pop("user_confirm", None)
         out.pop("total_ms", None)
-    if "provider_confirm_gate" in stages and "request_analyze" in stages and any(
-        node in done or out.get("current") == node for node in {"provider_confirm_gate", "provider_consensus", "provider_digest", "provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"}
-    ):
-        gate_index = stages.index("provider_confirm_gate")
-        for node in stages[:gate_index]:
-            if node not in done:
-                done.append(node)
     if "draft_assemble" in done:
         for node in MATERIAL_ASSEMBLY_SUBSTAGES:
-            if node in stages and node not in done:
-                done.append(node)
-    if any(node in done for node in {"provider_merge", "generate", "pre_review", "model_review", "draft_finalize", "user_confirm"}):
-        for node in ("provider_consensus", "provider_digest", "provider_merge"):
             if node in stages and node not in done:
                 done.append(node)
     if current and current in done:
@@ -195,8 +160,13 @@ def normalize_workflow_status(status: dict[str, Any]) -> dict[str, Any]:
         current = next((node for node in stages if node not in done), "")
     if current:
         out["current"] = current
-    if current in {"provider_confirm_gate", "user_confirm", "overwrite_confirm"} and current not in done:
+    if current and current not in stages:
+        current = next((node for node in stages if node not in done), "")
+        out["current"] = current
+    if current in {"user_confirm", "overwrite_confirm"} and current not in done:
         out["status"] = "awaiting_confirm"
+    elif out.get("status") == "awaiting_confirm":
+        out["status"] = "running"
     out["stages"] = stages
     out["done"] = [node for node in done if node in stages]
     return out
@@ -205,11 +175,7 @@ def normalize_workflow_status(status: dict[str, Any]) -> dict[str, Any]:
 def _normalize_stage_order(stages: list[str]) -> list[str]:
     if "draft_assemble" not in stages:
         return stages
-    canonical = draft_stages(
-        use_provider_source="provider_fanout" in stages,
-        selected_provider="provider_fanout" in stages,
-        followup=False,
-    )
+    canonical = draft_stages()
     order = {node: idx for idx, node in enumerate(canonical)}
     return sorted(stages, key=lambda node: (order.get(node, len(order) + stages.index(node)), stages.index(node)))
 

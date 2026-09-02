@@ -177,6 +177,7 @@ def format_wiki_for_prompt(items: list[dict[str, Any]], max_chars: int = 2400) -
 def seed_wiki_from_existing(novel_id: str | None = None) -> dict[str, Any]:
     """Create wiki entries from already-confirmed project memory. Idempotent."""
     nid = normalize_novel_id(novel_id)
+    ensure_wiki(nid)
     created = []
     try:
         from app.writing_memory import load_settings

@@ -80,10 +80,11 @@ def load_runtime_config() -> RuntimeConfig:
         prefix="IMAGE_LLM",
         fallback=_legacy_image_models(models),
     )
+    default_text_model = next((key for key, spec in models.items() if spec.ready), next(iter(models), ""))
     model_roles = {
-        "chat": _env_model_role("CHAT", "gpt"),
-        "writing": _env_model_role("WRITING", "claude"),
-        "review": _env_model_role("REVIEW", "gpt"),
+        "chat": _env_model_role("CHAT", default_text_model),
+        "writing": _env_model_role("WRITING", default_text_model),
+        "review": _env_model_role("REVIEW", default_text_model),
         "image": os.getenv("IMAGE_LLM_ROLE_IMAGE") or os.getenv("MODEL_ROLE_IMAGE") or "gpt_image",
     }
     return RuntimeConfig(

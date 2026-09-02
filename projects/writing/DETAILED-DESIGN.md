@@ -2,7 +2,7 @@
 
 > 文档状态：当前实现基线
 > 更新日期：2026-07-10
-> 适用范围：`app/writing_*`、`app/project_*`、provider/参考小说/短片视觉流、`app/static-writing/` 与 `projects/writing/` 运行资料
+> 适用范围：`app/writing_*`、`app/project_*`、参考小说/短片视觉流、`app/static-writing/` 与 `projects/writing/` 运行资料
 > 事实来源：当前代码、CodeGraph 查询、项目 README、SOP、TRD、记忆与 RAG 设计文档
 
 ## 1. 文档目的
@@ -10,10 +10,10 @@
 本文描述 Writing 项目的当前详细设计，回答以下问题：
 
 - 系统由哪些层和模块组成，各自负责什么。
-- 用户提问如何从 Web UI 进入 LangGraph，再到材料组装、provider、审查、确认与归档。
+- 用户提问如何从 Web UI 进入 LangGraph，再到材料组装、生成、审查、确认与归档。
 - 项目类型、项目路径、任务状态、上下文和记忆分别以什么为唯一来源。
 - Wiki、RAG、短期/长期记忆、Context Broker 如何协作且避免信息污染。
-- provider 自动化、参考小说工作台、短片生词/生图如何接入主系统。
+- 参考小说工作台、短片生词/生图如何接入主系统。
 - 系统如何处理并发、失败、恢复、幂等、文件保护和信息边界。
 - 后续新增项目类型、流程节点、上下文来源和模型时应从哪里扩展。
 
@@ -25,7 +25,7 @@ Writing 是本地运行的多项目智能创作工作台，不是一次性文本
 
 1. 先理解用户真实意图，再选择任务和创作阶段。
 2. 只装配当前任务需要的材料，避免全项目资料无差别进入 prompt。
-3. 支持 API 模型与千问、DeepSeek、豆包网页 provider 协同。
+3. 使用 API 模型承担聊天、创作、审查和意图分析角色。
 4. 在用户确认前保持草稿隔离，不污染主文件、长期记忆和高权威 Wiki。
 5. 任务中断、刷新或服务重启后仍能恢复上下文和下一步动作。
 6. 将确认产出沉淀到项目文件、章节摘要、Wiki、RAG 和调用轨迹。
@@ -36,7 +36,7 @@ Writing 是本地运行的多项目智能创作工作台，不是一次性文本
 - 不把聊天按钮隐式升级成创作流程。
 - 不让前端 DOM 成为任务恢复或项目结构的真相源。
 - 不在用户确认前自动覆盖作品主文件。
-- 不把所有材料、参考小说原文或本地路径发送给外部 provider。
+- 不把无关材料、参考小说原文或本地路径发送给外部模型。
 - 不用单项目 ID、单文件名或单次失败写业务硬编码。
 - 不强依赖 ChromaDB/Embedding sidecar；不可用时允许本地降级。
 
@@ -51,7 +51,7 @@ Writing 是本地运行的多项目智能创作工作台，不是一次性文本
 | 上下文可审计 | 材料有 required/preferred、预算、selected/dropped 和 trace | `writing_context_broker.py` |
 | 失败可降级 | 缺材料、专属组装器不支持、sidecar 不可用时不让流程无故中断 | `writing_tools.py`、`output_index.py` |
 | 兼容层隔离 | 中文路径优先，旧英文/下划线入口只在兼容层回退 | `project_paths.py`、SOP/知识库双文件名兼容 |
-| 可观测 | 节点、provider、预算、路由、耗时和门禁均可追踪 | invocation、workflow status、trajectory、review packet |
+| 可观测 | 节点、耗时和门禁均可追踪 | invocation、workflow status、trajectory、review packet |
 
 ## 4. 技术基线与代码规模
 
@@ -62,7 +62,6 @@ Writing 是本地运行的多项目智能创作工作台，不是一次性文本
 | Web | FastAPI、Uvicorn | HTTP API、SSE、静态资源托管 |
 | 工作流 | LangGraph | 状态图、条件路由、审查回环、checkpoint |
 | 模型 | LangChain、ChatOpenAI 兼容接口 | 聊天、创作、审查、意图分析 |
-| 网页自动化 | Playwright | 千问、DeepSeek、豆包会话与回答抓取 |
 | 持久化 | SQLite、JSON、JSONL、Markdown | checkpoint、长期 Store、任务状态、Wiki、作品文件 |
 | 检索 | ChromaDB、Embedding sidecar、TF-IDF、jieba、FAISS | 参考材料与确认产出召回 |
 | 配置 | Pydantic、python-dotenv、YAML | 模型注册表、请求校验、SOP |
@@ -89,11 +88,7 @@ flowchart LR
     GRAPH --> ANALYZE[意图分析与阶段识别]
     GRAPH --> ASSEMBLY[材料组装与阶段裁剪]
     ASSEMBLY --> BROKER[Context Broker]
-    BROKER --> ROUTER[Provider 信息边界路由]
-    ROUTER --> WEBPROVIDER[网页 Provider]
-    ROUTER --> LLM[API 创作模型]
-    WEBPROVIDER --> HUMAN1[用户确认材料]
-    HUMAN1 --> LLM
+    BROKER --> LLM[API 创作模型]
     LLM --> REVIEW[规则预审与模型审查]
     REVIEW --> HUMAN2[用户确认采纳]
 
@@ -117,10 +112,19 @@ flowchart LR
 | 领域服务层 | 意图、SOP、材料、生成、审查、写回 | `writing_request_analysis.py`、`writing_tools.py` 等 |
 | 上下文与知识层 | 结构 Wiki、项目 Wiki、LLM Wiki、Context Broker、实体索引 | `project_structure.py`、`writing_context_broker.py` 等 |
 | 记忆与检索层 | pending、checkpoint、长期 Store、章节摘要、RAG | `pending_intent_memory.py`、`writing_memory.py`、`output_index.py` |
-| 外部适配层 | LLM、网页 provider、Chroma/Embedding、图片接口 | `llm_client.py`、`ai_web_bridge.py`、`short_film_visual_flow.py` |
+| 外部适配层 | LLM、Chroma/Embedding、图片接口 | `llm_client.py`、`short_film_visual_flow.py` |
 | 运维观测层 | Doctor、任务中心、轨迹、预算、复盘、清理 | `writing_doctor.py`、`writing_task_center.py` 等 |
 
 ## 6. 运行时组件与配置
+
+### 6.0 认证、RBAC 与数据隔离
+
+- `app/auth.py` 使用 SQLite 保存用户、角色、菜单、角色菜单权限、Session 和项目所有权。
+- 浏览器只持有 HttpOnly、Secure、SameSite=Lax Session Cookie，不把令牌写入 localStorage。
+- `/api/*` 默认要求登录；后台接口继续校验 `admin.*` 权限。
+- 普通用户的数据范围由 `project_owners` 决定，`novel_dir()` 和 `list_novels()` 是项目隔离的统一门禁。
+- 新项目自动归属创建者；超管可在 `/admin` 调整项目所有者。
+- 现有项目在首次创建超管时归属超管，避免历史数据暴露给后续普通账号。
 
 ### 6.1 进程模型
 
@@ -133,10 +137,9 @@ Browser
   -> LangGraph / SQLite / 本地项目目录
   -> 可选 ChromaDB 8000 + Embedding 8001
   -> 可选外部 LLM 与图片接口
-  -> Playwright 持久化浏览器 profile
 ```
 
-provider job、参考小说抽取和部分 SSE 操作使用进程内线程或异步任务。系统当前不是分布式任务队列架构，服务进程重启后应依赖持久化记录做异常识别和人工恢复。
+参考小说抽取和部分 SSE 操作使用进程内线程或异步任务。系统当前不是分布式任务队列架构，服务进程重启后应依赖持久化记录做异常识别和人工恢复。
 
 ### 6.2 模型注册表
 
@@ -148,6 +151,8 @@ provider job、参考小说抽取和部分 SSE 操作使用进程内线程或异
 - 旧 `DEEPSEEK_*`、`GPT_*`、`GPT_IMAGE_*` 保留兼容回退。
 
 模型配置使用 `SecretStr` 保存 API Key。模型不可用时由 UI 提示用户切换，不静默换成未选择模型。
+
+`POST /api/writing/models/check` 对指定文本模型执行最小真实请求，返回模型键、模型名、检查时间、延迟和脱敏错误。前端顶部“检查联通”按钮使用该接口更新下拉选项的成功/失败标记；API Key 不进入响应和日志。
 
 ## 7. 项目模型与目录设计
 
@@ -205,8 +210,7 @@ storyboards -> 分镜生成
 | 任务 SOP | `sop-definitions/*.yaml` | `workflow_sop` |
 | 未完成任务 | pending intent | Task Center、前端恢复卡 |
 | 图执行状态 | LangGraph checkpoint | pending workflow snapshot |
-| 调用审计 | invocation JSON | Task Center、成本板、轨迹、复盘包 |
-| provider 异步状态 | `ProviderJobManager` | Task Center 快照 |
+| 调用审计 | invocation JSON | Task Center、轨迹、复盘包 |
 | 项目稳定知识 | LLM Wiki | prompt 召回 |
 | 项目过程知识 | Project Wiki | prompt 召回、观察面板 |
 | 参考维度数据 | `novel-acquisition/extracted/*` | 语义索引和统计 |
@@ -225,9 +229,7 @@ Task Center、Web DOM 和状态卡均为视图，不替代上述真相源。
 | 请求 | `user_message`、`mode`、`task`、`chapter`、`dimension` | 用户输入和显式参数 |
 | 项目 | `novel_id`、`project_kind`、`project_init` | 当前项目上下文 |
 | 意图 | `intent`、`request_analysis`、`pending_intent` | LLM 分析与可恢复意图 |
-| 材料 | `bundle`、`workflow_sop`、`request_file` | 组装材料和外发任务单 |
-| 调度 | `request_harness`、`token_budget`、`provider_route` | 边界、预算和路由依据 |
-| provider | `login_confirmed`、`provider_answers`、`awaiting_provider_confirm` | 网页模型协同状态 |
+| 材料 | `bundle`、`workflow_sop` | 组装材料和任务规范 |
 | 生成审查 | `draft`、`pre_review`、`model_review`、`review_strategy`、`iterations` | 草稿和审查回环 |
 | 恢复审计 | `track`、`invocation_id`、`actions`、`error` | 任务隔离和轨迹 |
 | 对话记忆 | `messages` | `add_messages` reducer 累积消息 |
@@ -246,20 +248,12 @@ flowchart TD
     D -->|search| H[search]
     D -->|draft/revise| I[draft_entry]
     I --> J[need_audit]
-    J -->|首问| K[draft_assemble]
-    J -->|固定会话续问| L[context_followup]
-    K --> M[prompt_refine]
-    M --> N[provider_route]
-    L --> N
-    N -->|fanout| O[provider_fanout]
-    N -->|direct| Q[generate]
-    O -->|有回答| P[provider_confirm_gate]
-    O -->|无可用回答| Q
-    P --> END1[等待用户确认材料]
+    J --> K[draft_assemble]
+    K --> Q[generate]
     Q --> R[pre_review]
     R -->|阻断且未超限| Q
     R -->|通过| S[model_review]
-    R -->|无草稿/全部失败| T[draft_finalize]
+    R -->|无草稿| T[draft_finalize]
     S -->|未通过且未超限| Q
     S -->|通过或到上限| T
     T --> END2[等待用户确认采纳]
@@ -341,7 +335,7 @@ LLM 解析失败时使用 deterministic fallback，但 fallback 仍需输出相�
 6. 章节功能、读者体验、研究、包装、自检、去 AI 味等增强卡。
 7. 阶段 profile 白名单裁剪。
 8. Context Broker 预算选择与 trace。
-9. 外发任务单和本地 prompt 材料索引。
+9. 生成任务所需的本地 prompt 材料索引。
 
 ### 11.3 Context Broker
 
@@ -364,84 +358,26 @@ block = section + key + title + content + required/preferred + estimated_tokens
 
 ### 11.4 信息分区
 
-材料包需要区分：
+材料包保留本地材料和选择轨迹：
 
-- `external_packet`：允许发送给网页 provider 的内容。
 - `local_only`：本地参考路径、内部来源说明、原始索引等。
 - `trace`：为什么选择或丢弃某项材料。
 
-provider 外发不得携带本地绝对路径、无关项目材料、内部调试说明或完整参考小说原文。
-
-## 12. Provider 路由与网页自动化
-
-### 12.1 路由决策
-
-`node_provider_route()` 结合以下信息决定 `fanout` 或 `direct`：
-
-- 用户是否启用网页模型。
-- 选择了哪些 provider。
-- 当前 SOP 的 mode 与 confirmation gate。
-- 当前任务和项目类型。
-- request text 的信息边界与预算。
-- 是否为固定会话续问。
-
-### 12.2 provider 执行
-
-支持千问、DeepSeek、豆包。`AIWebBridge` 负责：
-
-- 持久化浏览器 profile 和登录态。
-- 保存固定会话 URL。
-- 每个 provider 独立锁，避免同站点并发操作。
-- 全局 clipboard lock，避免三个 provider 同时复制覆盖剪贴板。
-- 等待本轮回答完成后，点击本轮提问坐标之后的回答复制按钮。
-- 记录抓取调试事件，但不把 prompt 正文写入普通流程日志。
-
-`ProviderJobManager` 保存进程内 job 状态，`ai_provider_bridge.py` 提供并发 fanout 和同步/异步 API 适配。
-
-### 12.3 用户确认材料门
-
-provider 有可用回答时，图进入 `provider_confirm_gate` 并结束本轮请求，返回：
-
-- provider 回答卡片。
-- `invocation_id` 和 checkpoint 信息。
-- `awaiting_provider_confirm=true`。
-- 可继续的“确认材料并融合”动作。
-
-用户可以修改 provider 卡片内容。确认时前端提交最新内容，后端记录原始长度、确认长度和 `edited` 标志。
-
-### 12.4 从确认点恢复
-
-`/api/writing/provider-confirm-stream` 不手工复制生成/审查逻辑，而是：
-
-```python
-Command(update=confirmed_state, goto="generate")
-```
-
-它从真实 LangGraph checkpoint 恢复：
-
-```text
-generate -> pre_review -> model_review -> draft_finalize
-```
-
-因此 provider 确认后的审查回环、状态事件和最终数据契约与直接生成路径一致。
+发送到 API 模型的 prompt 不得携带本地绝对路径、无关项目材料、内部调试说明或完整参考小说原文。
 
 ## 13. 生成与审查设计
 
 ### 13.1 生成节点
 
-`node_generate()` 根据是否存在 provider 回答选择：
+`node_generate()` 使用创作角色模型基于已组装材料生成；审查回环时带上上一轮问题重新生成。
 
-- provider 共识/分歧归纳、逐篇评分、融合生成。
-- 单模型直接生成。
-- 审查回环时带上上一轮问题重新生成。
-
-只有标记为 `prose_merge` 的模型 token 通过 SSE 暴露，摘要、评分和审查模型的中间 token 不发送到用户界面。
+只有标记为 `draft_generation` 的模型 token 通过 SSE 暴露，审查模型的中间 token 不发送到用户界面。
 
 ### 13.2 规则预审
 
 `node_pre_review()` 执行确定性门禁，例如格式、禁用表达、章节规范、重复和材料要求。若存在 blocking issue 且未达到 `MAX_ITERATIONS`，回到 `generate`。
 
-provider 全失败或草稿为空时不继续无意义审查，直接进入 finalize，由 UI 提供模型切换或 API 兜底入口。
+草稿为空时不继续无意义审查，直接进入 finalize，由 UI 提供模型切换入口。
 
 ### 13.3 模型审查
 
@@ -451,15 +387,14 @@ provider 全失败或草稿为空时不继续无意义审查，直接进入 fina
 - `deterministic_checklist`：规则化检查，不调用 LLM。
 - 模型交叉审查：调用 review 角色模型。
 
-未通过且未达到回环上限时回到 `generate`，不重新抓 provider，也不重复整个材料装配。
+未通过且未达到回环上限时回到 `generate`，复用本轮已装配材料。
 
 ### 13.4 定稿节点
 
 `draft_finalize` 负责：
 
 - 清理最终文本的内部标签和不可交付说明。
-- 汇总 draft、审查、路由、预算、材料健康、正文定位和 artifacts。
-- 保存 provider 回答产物。
+- 汇总 draft、审查、材料健康、正文定位和 artifacts。
 - 将 invocation 标记为等待用户确认。
 
 该节点不写主文件、不写长期记忆。
@@ -669,14 +604,13 @@ flowchart LR
 | 分组 | 代表接口 | 职责 |
 | --- | --- | --- |
 | 项目与状态 | `/status`、`/project`、`/task-center`、`/doctor` | 项目管理和健康检查 |
-| 创作 | `/draft-stream`、`/intervene-stream`、`/provider-confirm-stream` | 主创作闭环 |
+| 创作 | `/draft-stream`、`/intervene-stream` | 主创作闭环 |
 | 聊天 | `/plain-chat`、`/chat/history` | 不进入创作材料链 |
 | 文件 | `/files`、`/file`、`/file-media`、`/file-update/*` | 文件树、编辑和图片预览 |
 | Wiki/记忆 | `/wiki/*`、`/project-wiki/*`、`/memory-governance/*` | 知识管理和晋升 |
-| provider | `/ai-providers/*` | 网页模型状态、运行、固定会话 |
 | 参考小说 | `/reference-novels/*`、`/reference-workbench/*` | 导入、抽取、召回和发布 |
 | 视觉流 | `/visual-prompts-stream`、`/storyboard-images-stream` | 生词和生图 |
-| 观测 | `/invocation/*`、`/trajectory/*`、`/review-packet/*`、`/cost-board` | 审计与复盘 |
+| 观测 | `/invocation/*`、`/trajectory/*`、`/review-packet/*` | 审计与复盘 |
 
 ### 20.2 SSE 事件契约
 
@@ -687,9 +621,8 @@ flowchart LR
 | `invocation` | invocation ID、日志路径、SOP |
 | `node` | LangGraph 节点完成 |
 | `stage` | 细粒度业务阶段 running/done |
-| `provider` | provider 初始化和单家结果 |
-| `token` | 最终创作/融合文本 token |
-| `progress` | provider 确认、归档或工作台进度 |
+| `token` | 最终创作文本 token |
+| `progress` | 归档或工作台进度 |
 | `done` | 最终结构化结果 |
 | `error` | 可展示错误和恢复提示 |
 
@@ -712,7 +645,7 @@ flowchart LR
 项目选择         顶部模型/操作栏                   任务概览
 项目进度         状态流转栏                         观察 tabs
 多维参考库       对话 / 文件 / Wiki / 流程图        文件树
-参考工作台       提问框与 provider 选择
+参考工作台       提问框与模型选择
 ```
 
 中央工作区使用 `activeMainView` 在 conversation、file、wiki、graph 之间切换，不创建多个独立页面。
@@ -722,12 +655,12 @@ flowchart LR
 主要状态分为：
 
 - 项目：`currentProject`、`currentKind`。
-- 模型/provider：model registry、provider preferences。
+- 模型：model registry 与角色选择。
 - 主任务：`activeWorkflowStatus`、`composerBusy`、pending recovery。
 - 观察：collaboration、task center、entity registry、reference workbench。
 - 文件：file tree、active file、main view。
 - 视觉：graph transform、reference extract timer。
-- 偏好：项目、模型、provider、主题存入 `localStorage`。
+- 偏好：项目、模型和主题存入 `localStorage`。
 
 ### 21.3 忙碌和恢复
 
@@ -753,7 +686,6 @@ flowchart LR
 - invocation。
 - pending intent。
 - workflow status。
-- provider job。
 - 参考小说导入/抽取任务。
 - 公开库升级任务标记（公开库环境）。
 
@@ -764,8 +696,7 @@ flowchart LR
 每次创作流建立 `wr_<timestamp>_<hash>` 形式 ID，并记录：
 
 - 请求、task、chapter、track、SOP。
-- 节点事件、trajectory、provider 状态。
-- token budget、harness、route。
+- 节点事件与 trajectory。
 - 最终状态、artifact 和失败原因。
 
 文件位于项目 `日志/调用记录/<invocation_id>.json`，采用临时文件加原子替换写入。
@@ -774,12 +705,10 @@ flowchart LR
 
 | 工具 | 目的 |
 | --- | --- |
-| Doctor | 检查目录、Wiki、SOP、provider、记忆、RAG、预算和清理风险 |
-| Cost Board | 汇总调用和 provider 成本/耗时 |
+| Doctor | 检查目录、Wiki、SOP、记忆、RAG 和清理风险 |
 | Trajectory | 查看节点状态变化 |
 | Review Packet | 汇总一次任务的材料、路由、审查和产物 |
 | Recall Eval | 评估召回是否真正进入任务 |
-| Harness Suggestions | 从失败任务生成可沉淀约束建议 |
 | Memory Governance | 检测冲突和高权威知识晋升候选 |
 
 ## 23. 并发、幂等与一致性
@@ -788,8 +717,7 @@ flowchart LR
 
 - LangGraph 全局实例首次编译使用锁。
 - 材料组装缓存使用线程锁。
-- provider 使用每站点锁和全局 clipboard lock。
-- provider confirm、视觉流等 SSE 接口使用后台线程和 Queue 将事件传给响应生成器。
+- 视觉流等 SSE 接口使用后台线程和 Queue 将事件传给响应生成器。
 - 文件状态写入尽量使用临时文件 + `os.replace()`。
 
 ### 23.2 幂等策略
@@ -815,8 +743,6 @@ flowchart LR
 | --- | --- |
 | LLM 不可用 | 返回明确错误，保留 payload，允许用户切换模型继续 |
 | 专属材料组装器缺失/不支持 | generic fallback + `material_health` warning |
-| provider 单家失败 | 保留其他回答；全部失败时允许直接 API 生成 |
-| provider 回答抓取失败 | 卡片显示失败和手工补充入口，任务状态可恢复 |
 | 审查未通过 | 在最大迭代内回到 generate |
 | sidecar 不可用 | RAG/参考检索使用本地 fallback，不阻断归档 |
 | 服务刷新/重启 | pending + checkpoint + invocation 恢复 |
@@ -829,12 +755,12 @@ flowchart LR
 ### 25.1 密钥与本地数据
 
 - API Key 只存在 `.env.shared/.env.local`，不进入源码和公开仓库。
-- 浏览器登录态、运行缓存、真实项目资产和抽取语料默认不属于公开发布边界。
-- 日志避免记录完整 prompt、密钥和剪贴板正文。
+- 运行缓存、真实项目资产和抽取语料默认不属于公开发布边界。
+- 日志避免记录完整 prompt 和密钥。
 
-### 25.2 外发边界
+### 25.2 模型输入边界
 
-外部 provider 只接收明确组装的 `external_packet`。以下内容默认不外发：
+API 模型只接收当前任务明确选择的材料。以下内容默认不进入 prompt：
 
 - 本地绝对路径和账号信息。
 - 其他项目资料。
@@ -866,23 +792,15 @@ flowchart LR
 2. 对小说阶段更新 `NOVEL_STAGE_PROFILES`。
 3. 在 SOP 定义 role、stage、hard rules 和 review focus。
 4. 增加 artifact 路由与验收信号。
-5. 检查 Context Broker section 映射和 provider delivery rules。
+5. 检查 Context Broker section 映射和生成材料边界。
 
 ### 26.3 新增上下文来源
 
 1. 在材料组装阶段产出结构化字段。
 2. 在 stage profile 中声明允许进入哪些阶段。
 3. 在 Context Broker 中注册 section/key 和优先级。
-4. 明确 external/local-only 边界。
+4. 明确模型输入与 local-only 边界。
 5. 在 trace、召回评估和测试中证明该材料被选择或正确丢弃。
-
-### 26.4 新增网页 provider
-
-1. 增加 provider 元数据和持久化 profile。
-2. 实现会话 URL 判断、输入区、回答完成和回答复制定位。
-3. 复用 provider lock 与 clipboard lock。
-4. 输出统一 provider result 契约。
-5. 覆盖短答案、长答案、失败、登录失效和旧会话隔离测试。
 
 ## 27. 验证策略
 
@@ -900,9 +818,8 @@ node --check app\static-writing\app.js
 | --- | --- |
 | 意图分析 | 三类项目、阶段回退、局部正文定位、重复问题恢复 |
 | 材料 | stage 白名单、Context Broker selected/dropped、缺材料降级 |
-| Graph | 直接生成、provider 确认恢复、两级审查回环、最大迭代 |
+| Graph | 直接生成、两级审查回环、最大迭代 |
 | Web | SSE 事件顺序、刷新恢复、继续/终止、文件策略 |
-| provider | 三站点本轮回答复制、clipboard 锁、编辑后回写 |
 | 归档 | 主文件、摘要、Wiki、RAG、pending 清理、invocation 完成 |
 | 参考库 | 整本抽取、去重、索引、召回测试、证据发布 |
 | 视觉流 | manifest、角色引用、图片保存、失败恢复、文件预览 |
@@ -913,7 +830,6 @@ node --check app\static-writing\app.js
 | --- | --- | --- | --- |
 | 意图分析 | 完整阶段 profile | task + SOP | generic task |
 | 材料装配 | 专属或 generic fallback | 结构文件 + 技能 | generic bundle |
-| provider | 可选协同 | 可选协同 | 可选协同 |
 | 审查 | 规则 + 模型/清单 | 格式/可拍摄性 | 基础质量检查 |
 | 归档 | 正文/设定/大纲 adapter | 剧本/分镜 adapter | 草稿/随想 adapter |
 | 视觉流 | 非主能力 | 完整支持 | 不展示或合理降级 |
@@ -921,12 +837,11 @@ node --check app\static-writing\app.js
 ## 28. 已知风险与技术债
 
 1. `writing_web.py` 和前端 `app.js` 体量较大，API、状态恢复和 UI 逻辑耦合度偏高；后续可按领域拆 router/service/component，但应先保持现有契约。
-2. provider 页面 DOM 属于外部不稳定依赖，需要持续维护 selector 和真实站点 smoke test。
-3. 进程内 provider/reference job 在服务重启后不能自动继续，只能根据持久化状态识别中断并重建任务。
-4. Markdown/JSON/SQLite/Chroma 之间无统一事务，派生写入需要补偿和重建工具。
-5. CodeGraph 搜索可能命中 `tmp/compare-*` 参考项目；事实查询必须限定当前 `app/` 和 `projects/writing/` 实现。
-6. README 部分历史“五维”命名仍可能存在，当前实际能力已扩展为多维和 `method_*` 方法维度。
-7. profile、SOP、artifact adapter 三处必须同步维护；缺少契约测试时容易出现“能路由但不能正确归档”的漂移。
+2. 进程内 reference job 在服务重启后不能自动继续，只能根据持久化状态识别中断并重建任务。
+3. Markdown/JSON/SQLite/Chroma 之间无统一事务，派生写入需要补偿和重建工具。
+4. CodeGraph 搜索可能命中 `tmp/compare-*` 参考项目；事实查询必须限定当前 `app/` 和 `projects/writing/` 实现。
+5. README 部分历史“五维”命名仍可能存在，当前实际能力已扩展为多维和 `method_*` 方法维度。
+6. profile、SOP、artifact adapter 三处必须同步维护；缺少契约测试时容易出现“能路由但不能正确归档”的漂移。
 
 ## 29. 关键模块索引
 
@@ -938,8 +853,6 @@ node --check app\static-writing\app.js
 | SOP | `app/writing_sop.py`、`projects/writing/sop-definitions/` |
 | 材料/上下文 | `app/writing_tools.py`、`app/writing_context_broker.py`、`app/chapter_material_index.py` |
 | 生成/审查 | `app/writing_generate.py`、`app/writing_model_review.py`、`app/writing_review_strategy.py` |
-| provider | `app/ai_web_bridge.py`、`app/ai_provider_bridge.py`、`app/ai_provider_jobs.py` |
-| provider 融合 | `app/provider_answer_review.py`、`app/prose_merge.py` |
 | 记忆 | `app/writing_memory.py`、`app/pending_intent_memory.py`、`app/chapter_summary.py` |
 | Wiki/结构 | `app/project_structure.py`、`app/project_wiki.py`、`app/writing_wiki.py` |
 | 归档 | `app/confirm_writeback.py`、`app/novel_artifacts.py`、`app/project_artifacts.py` |
@@ -962,13 +875,11 @@ node --check app\static-writing\app.js
 | bundle | 材料组装结果 |
 | stage profile | 小说阶段允许材料和节点流配置 |
 | Context Broker | 上下文预算、选择、裁剪和 trace 组件 |
-| provider | 千问、DeepSeek、豆包等网页模型来源 |
 | confirmation gate | 需要用户确认后才能继续的流程节点 |
 | project Wiki | 项目过程知识与材料索引 |
 | LLM Wiki | 可高权威注入 prompt 的稳定知识 |
 | Entity Registry | 章节、人物、设定、资产等轻量实体索引 |
 | material health | 材料完整度和降级警告 |
-| external packet | 允许发送给外部 provider 的材料包 |
 
 ## 31. 维护约定
 

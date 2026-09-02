@@ -45,8 +45,8 @@ def sop_for_task(project_kind: str | None, task: str | None) -> dict[str, Any]:
         "role_id": role_key,
         "role_label": role.get("label") or role_key or "创作助手",
         "role_duty": role.get("duty") or "",
-        "mode": task_sop.get("mode") or sop.get("default_mode") or "parallel_collect_then_serial_merge",
-        "confirmation_gate": task_sop.get("confirmation_gate") or "material_selection",
+        "mode": task_sop.get("mode") or sop.get("default_mode") or "serial_generate",
+        "confirmation_gate": task_sop.get("confirmation_gate") or "final_acceptance",
         "hard_rules": list(task_sop.get("hard_rules") or []),
         "review_focus": list(task_sop.get("review_focus") or []),
     }
@@ -56,12 +56,11 @@ def format_sop_for_prompt(sop: dict[str, Any]) -> str:
     rules = "\n".join(f"- {_rule_text(item)}" for item in sop.get("hard_rules") or []) or "- 按当前任务规范执行。"
     focus = "\n".join(f"- {item}" for item in sop.get("review_focus") or []) or "- 检查是否覆盖用户要求。"
     mode_label = {
-        "parallel_collect_then_serial_merge": "多 provider 并行征集材料，用户确认后串行融合成稿",
+        "serial_generate": "基于项目材料生成并进入审查回环",
         "serial_transform": "基于已确认材料串行转化为下游产物",
         "serial_repair": "针对明确问题串行修复",
     }.get(sop.get("mode"), sop.get("mode") or "未指定")
     gate_label = {
-        "material_selection": "provider 材料确认门",
         "final_acceptance": "最终采纳确认门",
     }.get(sop.get("confirmation_gate"), sop.get("confirmation_gate") or "确认门")
     return "\n".join([
@@ -121,7 +120,7 @@ def _fallback_sop(kind: str) -> dict[str, Any]:
         "id": kind,
         "project_kind": kind,
         "label": "通用创作 SOP",
-        "default_mode": "parallel_collect_then_serial_merge",
+        "default_mode": "serial_generate",
         "roles": {
             "drafter": {"label": "创作助手", "duty": "负责基于材料输出可编辑内容。"},
         },
@@ -129,8 +128,8 @@ def _fallback_sop(kind: str) -> dict[str, Any]:
             "draft": {
                 "stage": "草稿生成",
                 "role": "drafter",
-                "mode": "parallel_collect_then_serial_merge",
-                "confirmation_gate": "material_selection",
+                "mode": "serial_generate",
+                "confirmation_gate": "final_acceptance",
                 "hard_rules": ["必须基于用户要求和项目材料输出。"],
                 "review_focus": ["是否覆盖用户目标。"],
             },

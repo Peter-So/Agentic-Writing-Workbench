@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
 import re
-import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
@@ -14,11 +10,8 @@ from langgraph.graph.message import add_messages
 
 from app import writing_tools
 from app.config import ROOT
-from app.project_paths import outputs_dir
-from app.project_kinds import SHORT_FILM_KIND, STRONG_NOVEL_KIND
 from app.writing_sop import sop_for_task
 from app.writing_generate import generate_prose
-from app.writing_harness import check_request_text, decide_provider_route, estimate_budget
 from app.writing_memory import get_checkpointer
 from app.writing_model_review import model_review_cross, review_feedback_text
 from app.writing_need_audit import audit_need
@@ -64,16 +57,11 @@ GRAPH_NODE_DESCRIPTIONS: dict[str, str] = {
     "search": "检索参考资料、五维库或项目相关材料。",
     "draft_entry": "进入创作或改写分支。",
     "need_audit": "审计需求复杂度、材料依赖和流程风险。",
-    "context_followup": "网页模型固定会话续问时复用上下文。",
     "material_profile": "按阶段 profile 切换材料范围：前期规划只取结构材料、Wiki 和技法；正文阶段补充大纲、前情、人物、风格、参考小说和连续性记忆。",
     "draft_assemble": "按项目 Wiki、章节、人物、前情、技法与限制精确组装材料；生成材料索引，精修任务会携带正文文件行号与待改片段。",
     "creative_state": "读取状态卡、短片状态卡和伏笔账本；缺失时降级，不阻塞创作。",
     "methodology_context": "从公共创作方法论知识库匹配阶段方法、Prompt 契约、研究和风格法则。",
     "creative_enhancements": "生成参考拆解卡、章节/场次功能、读者体验、卖点包装、研究、自检和去 AI 味检查。",
-    "prompt_refine": "把材料与目标整理成可执行的专业任务单。",
-    "provider_route": "判断是否进入网页模型 provider 分支。",
-    "provider_fanout": "调用已勾选网页 provider，收集外部候选内容。",
-    "provider_confirm_gate": "等待用户确认或补充 provider 材料后再继续融合。",
     "generate": "调用创作模型生成或根据审查反馈重新生成。",
     "pre_review": "规则预审，发现硬性问题时进入回环修复；小说前期规划任务会轻量跳过，正文/扩写/修复执行完整预审。",
     "model_review": "审查模型评分与反馈，必要时触发重新生成。",
@@ -105,16 +93,11 @@ GRAPH_NODE_GROUPS: dict[str, str] = {
     "search": "路由分支",
     "draft_entry": "创作主线",
     "need_audit": "创作主线",
-    "context_followup": "创作主线",
     "draft_assemble": "创作主线",
     "creative_state": "创作主线",
     "methodology_context": "创作主线",
     "creative_enhancements": "创作主线",
     "material_profile": "创作主线",
-    "prompt_refine": "创作主线",
-    "provider_route": "创作主线",
-    "provider_fanout": "网页模型",
-    "provider_confirm_gate": "网页模型",
     "generate": "审查回环",
     "pre_review": "审查回环",
     "model_review": "审查回环",
@@ -171,13 +154,9 @@ GRAPH_BASE_LAYOUT: dict[str, tuple[int, int]] = {
     "creative_state": (760, 866),
     "methodology_context": (1000, 866),
     "creative_enhancements": (1200, 866),
-    "prompt_refine": (1000, 972),
-    "provider_route": (1000, 1078),
-    "provider_fanout": (760, 1088),
-    "provider_confirm_gate": (760, 1194),
-    "generate": (1200, 1088),
-    "pre_review": (1200, 1194),
-    "model_review": (1200, 1300),
+    "generate": (1000, 972),
+    "pre_review": (1000, 1078),
+    "model_review": (1000, 1194),
     "draft_finalize": (1000, 1416),
     "user_confirm": (760, 1510),
     "archive_write": (1000, 1588),
@@ -188,8 +167,7 @@ GRAPH_BASE_BANDS = [
     ["入口理解", 92, 476],
     ["路由分支", 508, 592],
     ["创作主线", 620, 1010],
-    ["网页模型", 1050, 1232],
-    ["审查回环", 1050, 1340],
+    ["审查回环", 940, 1340],
     ["定稿确认", 1378, 1688],
 ]
 
@@ -213,7 +191,7 @@ CREATIVE_ENHANCEMENT_FLOW_EDGES = [
     {"source": "creative_state", "target": "methodology_context", "label": "匹配方法", "conditional": False},
     {"source": "methodology_context", "target": "creative_enhancements", "label": "生成增强卡", "conditional": False},
     {"source": "creative_enhancements", "target": "material_profile", "label": "交给阶段裁剪", "conditional": False},
-    {"source": "material_profile", "target": "prompt_refine", "label": "输出任务单", "conditional": False},
+    {"source": "material_profile", "target": "generate", "label": "进入生成", "conditional": False},
 ]
 
 NOVEL_STAGE_FLOW_NODES = ["novel_stage_route", "material_profile"]
@@ -233,7 +211,6 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
     "short_film": {
         "visible": COMMON_GRAPH_NODE_IDS | {
             "assemble", "search", "draft_entry", "need_audit", "draft_assemble",
-            "prompt_refine", "provider_route", "provider_fanout", "provider_confirm_gate",
             "generate", "pre_review", "model_review", "draft_finalize",
         },
         "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, *CREATIVE_ENHANCEMENT_FLOW_NODES, "material_profile", "visual_prompt", "image_plan", "image_generate", "storyboard_archive"],
@@ -259,8 +236,7 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
         "group_bands": [
             ["入口理解", 92, 476],
             ["剧本材料", 508, 1010],
-            ["网页模型", 1050, 1232],
-            ["审查回环", 1050, 1340],
+            ["审查回环", 940, 1340],
             ["影像生图", 1278, 1570],
             ["定稿确认", 1320, 1688],
         ],
@@ -268,7 +244,7 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
     "generic": {
         "visible": COMMON_GRAPH_NODE_IDS | {
             "assemble", "search", "draft_entry", "need_audit", "draft_assemble",
-            "prompt_refine", "provider_route", "generate", "model_review", "draft_finalize",
+            "generate", "model_review", "draft_finalize",
         },
         "extra_nodes": [*PROJECT_WIKI_FLOW_NODES, "idea_settle"],
         "extra_edges": [
@@ -283,9 +259,7 @@ PROJECT_GRAPH_PROFILES: dict[str, dict[str, Any]] = {
             "draft_entry": (900, 548),
             "need_audit": (900, 654),
             "draft_assemble": (900, 760),
-            "prompt_refine": (900, 866),
-            "provider_route": (900, 972),
-            "generate": (900, 1088),
+            "generate": (900, 972),
             "model_review": (900, 1194),
             "draft_finalize": (900, 1300),
             "idea_settle": (900, 1416),
@@ -412,10 +386,6 @@ class WritingState(TypedDict, total=False):
     dimension: str | None
     top_k: int
     # 生成/审查回环相关
-    provider_answers: list[dict]
-    use_provider_source: bool
-    login_confirmed: dict
-    skip_material_assemble: bool
     track: str
     novel_id: str
     project_kind: str
@@ -425,13 +395,6 @@ class WritingState(TypedDict, total=False):
     need_audit: dict
     bundle: dict
     workflow_sop: dict
-    request_file: str
-    request_harness: dict
-    token_budget: dict
-    refined_prompt: dict
-    provider_failed: bool
-    provider_route: dict
-    awaiting_provider_confirm: bool
     invocation_id: str
     model_preferences: dict[str, str]
     merge_info: dict
@@ -655,7 +618,6 @@ def node_need_audit(state: WritingState) -> WritingState:
         project_kind=state.get("project_kind"),
         task=state.get("task", "prose"),
         chapter=state.get("chapter"),
-        use_provider_source=bool(state.get("use_provider_source")),
     )
     actions = list(state.get("actions") or [])
     actions.append(f"need_audit({audit.get('level')},{audit.get('deliverable')})")
@@ -694,65 +656,6 @@ def node_compress_memory(state: WritingState) -> WritingState:
         return {}
 
 
-def _json_http(method: str, path: str, payload: dict[str, Any] | None = None,
-               timeout: int = 30) -> dict[str, Any]:
-    """Call the local web API used by the normal provider flow."""
-    base = os.getenv("WRITING_WEB_BASE_URL", "http://127.0.0.1:7861").rstrip("/")
-    body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = {"Content-Type": "application/json"} if payload is not None else {}
-    req = urllib.request.Request(f"{base}{path}", data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-    return json.loads(raw) if raw else {}
-
-
-def _run_provider_job_via_web_api(payload: dict[str, Any], writer=None,
-                                  poll_interval: float = 1.0,
-                                  timeout_seconds: int = 210) -> dict[str, Any]:
-    """Start and poll the same async provider job endpoint used by normal AI mode."""
-    started = _json_http("POST", "/api/ai-providers/run-async", payload, timeout=30)
-    job_id = started.get("job_id")
-    if not started.get("ok") or not job_id:
-        return started
-
-    emitted: set[str] = set()
-    deadline = time.monotonic() + timeout_seconds
-    last_snapshot: dict[str, Any] = {}
-    while time.monotonic() < deadline:
-        snapshot = _json_http("GET", f"/api/ai-providers/job/{job_id}", timeout=30)
-        last_snapshot = snapshot
-        for item in snapshot.get("providers") or []:
-            pid = item.get("provider")
-            status = item.get("status")
-            if pid and status in {"success", "partial", "failed"} and pid not in emitted:
-                emitted.add(pid)
-                if writer:
-                    try:
-                        writer({"type": "provider", "provider": pid,
-                                "name": item.get("name"), "status": status,
-                                "result": item.get("result", ""),
-                                "elapsed": item.get("elapsed_seconds")})
-                    except Exception:
-                        pass
-        if snapshot.get("done"):
-            return snapshot.get("result") or {
-                "ok": any((p.get("status") in {"success", "partial"}) for p in snapshot.get("providers") or []),
-                "status": "completed",
-                "message": "AI provider 协同执行完成。",
-                "format_for_writing": payload.get("format_for_writing", False),
-                "selected": started.get("selected") or [],
-                "results": snapshot.get("providers") or [],
-            }
-        time.sleep(poll_interval)
-    return {
-        "ok": False,
-        "status": "timeout",
-        "message": f"AI provider 协同超时，job_id={job_id}",
-        "selected": started.get("selected") or [],
-        "results": last_snapshot.get("providers") or [],
-    }
-
-
 def node_build_index(state: WritingState) -> WritingState:
     data = writing_tools.build_semantic_index(novel_id=state.get("novel_id"))
     return {"data": data, "actions": ["build_semantic_index"]}
@@ -788,171 +691,6 @@ def node_search(state: WritingState) -> WritingState:
 
 
 # ---- draft/revise 分支：材料组装 → 生成 → 预审查门禁 → 模型交叉审查（带回环）----
-
-def node_provider_fanout(state: WritingState) -> WritingState:
-    """创作模式+AI 同开时前置执行：抓千问/DeepSeek/豆包答案作为前置素材。
-
-    失败/空答案不阻断主流程（容错）；只取 success/partial 的非空答案。
-    通过 get_stream_writer 逐家透出进度（provider_init + 每家完成事件），供前端渲染卡片。
-    """
-    from app.ai_provider_bridge import PROVIDERS
-
-    try:
-        from langgraph.config import get_stream_writer
-        writer = get_stream_writer()
-    except Exception:
-        writer = None
-
-    login = state.get("login_confirmed") or {}
-    answers: list[dict] = []
-    actions = list(state.get("actions") or [])
-    # 优先把"提问文件"全文发给 provider（材料+规范+限制），无则退回用户原文。
-    refined = state.get("refined_prompt") or {}
-    bundle = state.get("bundle") or {}
-    if state.get("skip_material_assemble"):
-        request_text = bundle.get("request_text") or state.get("user_message", "")
-    else:
-        request_text = refined.get("text") or bundle.get("request_text") or state.get("user_message", "")
-    if any(login.values()):
-        # 按 PROVIDERS 固定顺序透出选中列表，前端据此先出占位卡片。
-        order = [p["id"] for p in PROVIDERS if login.get(p["id"])]
-        token_budget = estimate_budget(prompt_text=request_text, selected_providers=order)
-        actions.append(f"budget({token_budget.get('level')},{token_budget.get('estimated_total_tokens')})")
-        _flow_debug(
-            f"provider_fanout_start novel={state.get('novel_id')} task={state.get('task')} "
-            f"mode={state.get('mode')} selected={','.join(order)} prompt_len={len(request_text)} "
-            f"budget={token_budget.get('estimated_total_tokens')}"
-        )
-        if writer:
-            try:
-                writer({"type": "provider_init", "order": order,
-                        "names": {p["id"]: p["name"] for p in PROVIDERS if p["id"] in order}})
-            except Exception:
-                pass
-
-        try:
-            result = _run_provider_job_via_web_api(
-                {
-                    "message": request_text,
-                    "mode": state.get("mode", "auto"),
-                    "chapter": state.get("chapter"),
-                    "attachments": [],
-                    "login_confirmed": login,
-                    "format_for_writing": False,  # 提问文件已是完整 prompt，不再二次包装
-                    "novel_id": state.get("novel_id"),
-                },
-                writer=writer,
-            )
-            for item in result.get("results") or []:
-                if item.get("status") in {"success", "partial"} and (item.get("result") or "").strip():
-                    answers.append({
-                        "provider": item.get("provider"),
-                        "name": item.get("name"),
-                        "status": item.get("status"),
-                        "result": item.get("result"),
-                    })
-            actions.append(f"provider_fanout({len(answers)})")
-            _flow_debug(
-                f"provider_fanout_done novel={state.get('novel_id')} task={state.get('task')} "
-                f"answers={len(answers)} statuses="
-                f"{','.join((item.get('provider','?') + ':' + item.get('status','?')) for item in (result.get('results') or []))}"
-            )
-        except Exception as exc:  # 容错：不阻断主流程
-            actions.append("provider_fanout(failed)")
-            _flow_debug(
-                f"provider_fanout_error novel={state.get('novel_id')} task={state.get('task')} "
-                f"type={type(exc).__name__} error={exc}"
-            )
-            return {"provider_answers": [], "actions": actions, "error": f"provider_fanout: {exc}", "token_budget": token_budget if any(login.values()) else {}}
-    return {"provider_answers": answers, "actions": actions, "token_budget": token_budget if any(login.values()) else {}}
-
-
-def node_provider_confirm_gate(state: WritingState) -> WritingState:
-    """Stop after provider fanout so the user can confirm/edit/upload materials."""
-    actions = list(state.get("actions") or [])
-    actions.append("provider_confirm_gate")
-    return {
-        "awaiting_provider_confirm": True,
-        "actions": actions,
-        "data": {
-            "draft": "",
-            "provider_answers": state.get("provider_answers") or [],
-            "awaiting_provider_confirm": True,
-            "provider_failed": False,
-            "merge_info": state.get("merge_info") or {},
-            "request_file": state.get("request_file", ""),
-            "refined_prompt": state.get("refined_prompt") or {},
-            "request_harness": state.get("request_harness") or (state.get("bundle") or {}).get("request_harness") or {},
-            "token_budget": state.get("token_budget") or (state.get("bundle") or {}).get("token_budget") or {},
-            "provider_route": state.get("provider_route") or {},
-            "project_kind": state.get("project_kind", ""),
-            "project_init": state.get("project_init") or {},
-            "need_audit": state.get("need_audit") or {},
-            "material_health": (state.get("bundle") or {}).get("material_health") or {},
-            "request_analysis": state.get("request_analysis") or {},
-            "stage_profile": (state.get("bundle") or {}).get("stage_profile") or (state.get("request_analysis") or {}).get("stage_profile") or {},
-            "prose_locations": (state.get("bundle") or {}).get("prose_locations") or (state.get("request_analysis") or {}).get("prose_locations") or [],
-            "pending_intent": state.get("pending_intent") or {},
-            "invocation_id": state.get("invocation_id", ""),
-            "workflow_sop": state.get("workflow_sop") or (state.get("bundle") or {}).get("workflow_sop") or {},
-        },
-    }
-
-
-def node_context_followup(state: WritingState) -> WritingState:
-    """AI 固定会话续问：跳过材料重组，直接把用户新方向发给 provider。"""
-    from app.project_kinds import project_kind
-
-    message = (state.get("user_message") or "").strip()
-    task = state.get("task", "prose")
-    kind = state.get("project_kind") or project_kind(state.get("novel_id"))
-    bundle = {
-        "task": task,
-        "chapter": state.get("chapter"),
-        "novel_id": state.get("novel_id"),
-        "project_kind": kind,
-        "materials": {},
-        "spec": "",
-        "recompose_instruction": "上下文续问：沿用 provider 固定会话的上下文，只处理用户本次的新方向。",
-        "request_text": message,
-        "model_preferences": state.get("model_preferences") or {},
-    }
-    workflow_sop = sop_for_task(kind, task)
-    bundle["workflow_sop"] = workflow_sop
-    actions = list(state.get("actions") or [])
-    actions.append("skip_material_assemble(context_followup)")
-    actions.append(f"sop({workflow_sop.get('stage')})")
-    _flow_debug(
-        f"context_followup novel={state.get('novel_id')} kind={kind} "
-        f"task={task} chapter={state.get('chapter')} prompt_len={len(message)}"
-    )
-    return {
-        "bundle": bundle,
-        "workflow_sop": workflow_sop,
-        "refined_prompt": {"ok": True, "source": "context_followup", "text": message},
-        "actions": actions,
-        "request_file": "",
-    }
-
-
-def node_provider_route(state: WritingState) -> WritingState:
-    """P2 information-boundary router: decide fanout vs single-agent path."""
-    refined = state.get("refined_prompt") or {}
-    bundle = state.get("bundle") or {}
-    request_text = refined.get("text") or bundle.get("request_text") or state.get("user_message", "")
-    route = decide_provider_route(
-        project_kind=state.get("project_kind") or bundle.get("project_kind"),
-        task=state.get("task", "prose"),
-        workflow_sop=state.get("workflow_sop") or bundle.get("workflow_sop") or {},
-        use_provider_source=bool(state.get("use_provider_source")),
-        login_confirmed=state.get("login_confirmed") or {},
-        skip_material_assemble=bool(state.get("skip_material_assemble")),
-        request_text=request_text,
-    )
-    actions = list(state.get("actions") or [])
-    actions.append(f"provider_route({route.get('decision')},{route.get('reason')})")
-    return {"provider_route": route, "token_budget": route.get("budget") or {}, "actions": actions}
-
 
 def node_draft_assemble(state: WritingState) -> WritingState:
     """组装材料（含 spec/recompose_instruction），结果存入 state.bundle 供生成使用。
@@ -1285,33 +1023,11 @@ def node_draft_assemble(state: WritingState) -> WritingState:
         bundle["material_health"] = {"ok": False, "level": "warn", "error": f"{type(exc).__name__}: {exc}"}
         actions.append("material_health_failed")
 
-    # 生成"provider 提问文件"（材料+规范+限制拼成可读 prompt，落盘到项目 输出/），供 provider 作答。
-    try:
-        from app.provider_prompt_file import write_request_file
-        rf = write_request_file(task, bundle, chapter, message)
-        bundle["request_text"] = rf.get("text") or message
-        bundle["request_harness"] = rf.get("harness") or {}
-        bundle["token_budget"] = rf.get("budget") or {}
-        actions.append("build_request_file")
-        if (rf.get("harness") or {}).get("level") in {"warn", "error"}:
-            actions.append(f"prompt_harness({(rf.get('harness') or {}).get('level')})")
-        if (rf.get("budget") or {}).get("level") in {"warn", "error"}:
-            actions.append(f"budget({(rf.get('budget') or {}).get('level')})")
-        if not rf.get("ok", True):
-            issues = (rf.get("harness") or {}).get("issues") or []
-            message_text = "；".join(item.get("message", "") for item in issues[:3]) or "provider 提问包未通过 harness。"
-            raise writing_tools.WritingToolError(message_text)
-        rf_path = rf.get("path", "")
-        _flow_debug(
-            f"draft_assemble novel={state.get('novel_id')} kind={state.get('project_kind')} "
-            f"task={task} chapter={chapter} query_len={len(assembly_query)} "
-            f"request_file={rf_path} prompt_len={len(bundle.get('request_text') or '')}"
-        )
-    except writing_tools.WritingToolError:
-        raise
-    except Exception:
-        bundle["request_text"] = message
-        rf_path = ""
+    bundle["request_text"] = message
+    _flow_debug(
+        f"draft_assemble novel={state.get('novel_id')} kind={state.get('project_kind')} "
+        f"task={task} chapter={chapter} query_len={len(assembly_query)}"
+    )
     try:
         writing_tools.rewrite_material_bundle_output(data, bundle)
     except Exception:
@@ -1321,9 +1037,6 @@ def node_draft_assemble(state: WritingState) -> WritingState:
         "chapter": chapter,
         "workflow_sop": workflow_sop,
         "actions": actions,
-        "request_file": rf_path,
-        "request_harness": bundle.get("request_harness") or {},
-        "token_budget": bundle.get("token_budget") or {},
     }
 
 
@@ -1354,116 +1067,10 @@ def _assembly_query_from_analysis(*, message: str, task: str, chapter: int | Non
     return "；".join(compact)[:1200]
 
 
-def node_prompt_refine(state: WritingState) -> WritingState:
-    """Short-film skill layer: rewrite user request into a professional provider prompt."""
-    if state.get("project_kind") != SHORT_FILM_KIND:
-        return {}
-    if not (state.get("use_provider_source") and any((state.get("login_confirmed") or {}).values())):
-        actions = list(state.get("actions") or [])
-        actions.append("prompt_refine_skipped(no_provider)")
-        return {"actions": actions}
-    actions = list(state.get("actions") or [])
-    try:
-        from app.short_film_skills import refine_short_film_prompt
-        refined = refine_short_film_prompt(
-            novel_id=state.get("novel_id"),
-            task=state.get("task", "screenplay"),
-            chapter=state.get("chapter"),
-            user_message=state.get("user_message", ""),
-            bundle=state.get("bundle") or {},
-            model_key=(state.get("model_preferences") or {}).get("writing"),
-        )
-        if refined.get("ok"):
-            bundle = dict(state.get("bundle") or {})
-            bundle["request_text"] = refined["text"]
-            harness = check_request_text(
-                project_kind=state.get("project_kind"),
-                task=state.get("task", "screenplay"),
-                request_text=refined["text"],
-                workflow_sop=state.get("workflow_sop") or bundle.get("workflow_sop") or {},
-            )
-            budget = estimate_budget(prompt_text=refined["text"])
-            bundle["request_harness"] = harness
-            bundle["token_budget"] = budget
-            actions.append("prompt_refine(short_film_skill)")
-            if harness.get("level") in {"warn", "error"}:
-                actions.append(f"prompt_harness({harness.get('level')})")
-            if not harness.get("ok", True):
-                issues = harness.get("issues") or []
-                message_text = "；".join(item.get("message", "") for item in issues[:3]) or "短片专业提问未通过 harness。"
-                raise writing_tools.WritingToolError(message_text)
-            return {
-                "refined_prompt": refined,
-                "bundle": bundle,
-                "actions": actions,
-                "request_harness": harness,
-                "token_budget": budget,
-            }
-        actions.append(f"prompt_refine_skipped({refined.get('reason') or refined.get('error') or 'failed'})")
-        return {"refined_prompt": refined, "actions": actions}
-    except Exception as exc:
-        actions.append("prompt_refine_failed")
-        return {"refined_prompt": {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, "actions": actions}
-
-
-def _should_merge_provider_outputs(state: WritingState, bundle: dict, task: str) -> bool:
-    project_kind = bundle.get("project_kind") or state.get("project_kind", "")
-    task_key = str(task or "").strip().lower()
-    if project_kind == SHORT_FILM_KIND:
-        return True
-    if task_key in {"prose", "expansion", "fix"}:
-        return True
-    if project_kind != STRONG_NOVEL_KIND:
-        return False
-    analysis = state.get("request_analysis") or bundle.get("request_analysis") or {}
-    if str(analysis.get("creative_stage") or "").strip().lower() == "prose":
-        return True
-    request_text = "\n".join(filter(None, [
-        str(state.get("user_message") or ""),
-        str(bundle.get("user_request") or ""),
-        str(bundle.get("request_text") or ""),
-    ]))
-    return bool(
-        re.search(r"(正文|章节正文|第\s*[\d零〇一二两三四五六七八九十百]+\s*[章节回])", request_text)
-        and re.search(r"(写|编写|生成|创作|完成|输出|续写|扩写|精修|改写|重写)", request_text)
-    )
-
-
 def node_generate(state: WritingState) -> WritingState:
-    """正文主产出：provider 答案为主。
-
-    - 有 provider 答案：正文类任务 → 多维提要+取最优融合成 1 篇；其他环节 → 直接用 provider 答案（择最长）。
-    - 无 provider 答案（全失败/未开 provider）：
-        · 创作模式+AI（use_provider_source）→ 标记 provider_failed，前端给"用API生成"兜底按钮。
-        · 否则 → 按用户选择的“创作”模型做材料驱动生成。
-    """
+    """使用用户选择的创作模型，根据已组装材料生成或修订内容。"""
     bundle = state.get("bundle") or {}
-    task = state.get("task", "prose")
-    answers = state.get("provider_answers") or []
     actions = list(state.get("actions") or [])
-    route = state.get("provider_route") or {}
-    use_provider = bool(state.get("use_provider_source")) and route.get("decision") != "single_agent"
-
-    if answers:
-        if _should_merge_provider_outputs(state, bundle, task):
-            out = _merge_provider_outputs(bundle, answers, actions, task=task)
-            return {"draft": out["draft"], "merge_info": out["merge_info"],
-                    "actions": actions, "iterations": state.get("iterations", 0) + 1,
-                    "provider_failed": False}
-        # 其他环节：直接采用 provider 答案（取最长的一篇作为草稿，用户再确认/改写）
-        best = max(answers, key=lambda a: len(a.get("result") or ""))
-        draft = best.get("result", "")
-        actions.append(f"use_provider({best.get('name')})")
-        return {"draft": draft, "actions": actions,
-                "iterations": state.get("iterations", 0) + 1, "provider_failed": False}
-
-    # 无 provider 答案
-    if use_provider:
-        actions.append("provider_failed")
-        return {"draft": "", "provider_failed": True, "actions": actions,
-                "iterations": state.get("iterations", 0) + 1}
-
-    # 非 provider 场景：按用户选择的“创作”模型做材料驱动生成。
     feedback = ""
     mr = state.get("model_review") or {}
     pr = state.get("pre_review") or {}
@@ -1472,113 +1079,17 @@ def node_generate(state: WritingState) -> WritingState:
     elif pr and pr.get("blocking_count", 0) > 0:
         feedback = writing_tools.pre_review_issues_text(pr.get("issues") or [])
     out = generate_prose(
-        bundle, model_key=(state.get("model_preferences") or {}).get("writing"),
-        provider_answers=[],
+        bundle,
+        model_key=(state.get("model_preferences") or {}).get("writing"),
         revise_target=state.get("draft", "") if state.get("intent") == "revise" else "",
         review_feedback=feedback,
     )
     actions.append(f"generate({out.get('model')})")
-    return {"draft": out.get("text", ""), "actions": actions,
-            "iterations": state.get("iterations", 0) + 1, "provider_failed": False}
-
-
-def _merge_provider_outputs(bundle: dict, answers: list[dict], actions: list[str],
-                            task: str = "prose") -> dict:
-    """provider 融合：逐篇提要评分 → 取最优融合成一篇。"""
-    from app.prose_merge import digest_one, merge_drafts
-    from app.provider_answer_review import analyze_provider_answers
-
-    try:
-        from langgraph.config import get_stream_writer
-        writer = get_stream_writer()
-    except Exception:
-        writer = None
-
-    def emit_stage(stage: str, status: str = "running", **details: Any) -> None:
-        if not writer:
-            return
-        try:
-            writer({"type": "stage", "stage": stage, "status": status, **details})
-        except Exception:
-            pass
-
-    materials = bundle.get("materials") or {}
-    project_kind = bundle.get("project_kind") or ""
-    request_analysis = bundle.get("request_analysis") or {}
-    brief = "\n".join(filter(None, [
-        f"大纲：{materials.get('chapter_outline','')}",
-        f"人物：{materials.get('character_profiles','')}",
-        f"约束：{materials.get('constraints','')}",
-        f"项目文档：{materials.get('project_docs','')}",
-        f"当前状态：{(bundle.get('creative_state') or {}).get('text', '')}",
-        f"方法论：{(bundle.get('methodology_context') or {}).get('text', '')}",
-        f"前置检查：{(bundle.get('creative_preflight') or {}).get('text', '')}",
-        f"增强检查：{_enhancement_brief(bundle)}",
-    ]))[:4000]
-    technique_context: dict[str, Any] = {}
-    try:
-        from app.writing_techniques import technique_context_for_task
-
-        technique_context = technique_context_for_task(
-            query="\n".join(filter(None, [
-                str(bundle.get("user_request") or bundle.get("request_text") or ""),
-                str(request_analysis.get("generator_instruction") or ""),
-                str(request_analysis.get("reason") or ""),
-            ])),
-            outline="\n".join(filter(None, [
-                str(materials.get("chapter_outline") or ""),
-                str(materials.get("outline_context") or ""),
-            ])),
-            project_kind=project_kind,
-            task=task,
-            model_key=((bundle.get("model_preferences") or {}).get("review")),
-            max_lines=6,
-        )
-        if technique_context.get("text"):
-            brief = "\n\n".join([brief, technique_context["text"]])[:5200]
-            bundle["technique_context"] = technique_context
-            actions.append(f"technique_context({technique_context.get('mode')},{len(technique_context.get('lines') or [])})")
-    except Exception as exc:
-        actions.append(f"technique_context_failed({type(exc).__name__})")
-    spec = bundle.get("spec") or ""
-    drafts = {a.get("name") or a.get("provider"): (a.get("result") or "") for a in answers}
-    emit_stage("provider_consensus", "running", total=len(answers))
-    provider_review = analyze_provider_answers(answers)
-    emit_stage(
-        "provider_consensus",
-        "done",
-        consensus=len(provider_review.get("consensus") or []),
-        divergence=len(provider_review.get("divergences") or []),
-        adoptable=len(provider_review.get("adoptable_points") or []),
-    )
-    actions.append(
-        f"provider_review(consensus={len(provider_review.get('consensus') or [])},"
-        f"divergence={len(provider_review.get('divergences') or [])})"
-    )
-    prefs = bundle.get("model_preferences") or {}
-    review_model = prefs.get("review")
-    writing_model = prefs.get("writing")
-    digests = []
-    total_drafts = len(drafts)
-    emit_stage("provider_digest", "running", current=0, total=total_drafts)
-    for idx, (name, prose) in enumerate(drafts.items(), start=1):
-        emit_stage("provider_digest", "running", current=idx, total=total_drafts, provider=name)
-        digests.append(
-            digest_one(name, prose, brief, model_key=review_model, project_kind=project_kind, task=task)
-        )
-    emit_stage("provider_digest", "done", current=total_drafts, total=total_drafts)
-    actions.append(f"digest({len(digests)})")
-    emit_stage("provider_merge", "running", total=total_drafts)
-    merged = merge_drafts(drafts, digests, brief, spec=spec, model_key=writing_model,
-                          project_kind=project_kind, task=task, provider_review=provider_review)
-    emit_stage("provider_merge", "done", model=merged.get("model"), used_fulltext=merged.get("used_fulltext"))
-    actions.append(f"merge({merged.get('model')},fulltext={merged.get('used_fulltext')})")
-    return {"draft": merged.get("text", ""),
-            "merge_info": {"best_per_dimension": merged.get("best_per_dimension"),
-                           "used_fulltext": merged.get("used_fulltext"),
-                           "provider_review": provider_review,
-                           "digests": digests,
-                           "technique_context": technique_context}}
+    return {
+        "draft": out.get("text", ""),
+        "actions": actions,
+        "iterations": state.get("iterations", 0) + 1,
+    }
 
 
 def node_pre_review(state: WritingState) -> WritingState:
@@ -1651,9 +1162,6 @@ def node_model_review(state: WritingState) -> WritingState:
         task=state.get("task"),
         draft=state.get("draft", ""),
         need_audit=state.get("need_audit") or {},
-        request_harness=state.get("request_harness") or (state.get("bundle") or {}).get("request_harness") or {},
-        token_budget=state.get("token_budget") or (state.get("bundle") or {}).get("token_budget") or {},
-        provider_route=state.get("provider_route") or {},
     )
     if strategy.get("mode") == "skip":
         actions = list(state.get("actions") or [])
@@ -1741,16 +1249,6 @@ def node_draft_finalize(state: WritingState) -> WritingState:
     actions = list(state.get("actions") or [])
     if draft and task in {"prose", "character", "outline"}:
         actions.append("memory_write_pending_user_confirm")
-    artifacts = {}
-    if state.get("provider_answers"):
-        try:
-            artifacts["provider_answers"] = _save_provider_artifacts(
-                state.get("novel_id"), task, state.get("provider_answers") or [],
-                state.get("merge_info") or {},
-            )
-            actions.append("save_provider_artifacts")
-        except Exception:
-            pass
     return {
         "actions": actions,
         "data": {
@@ -1767,20 +1265,12 @@ def node_draft_finalize(state: WritingState) -> WritingState:
             "model_review": state.get("model_review") or {},
             "review_strategy": state.get("review_strategy") or {},
             "iterations": state.get("iterations", 0),
-            "provider_failed": bool(state.get("provider_failed")),
             "merge_info": state.get("merge_info") or {},
-            "request_file": state.get("request_file", ""),
-            "refined_prompt": state.get("refined_prompt") or {},
-            "request_harness": state.get("request_harness") or (state.get("bundle") or {}).get("request_harness") or {},
-            "token_budget": state.get("token_budget") or (state.get("bundle") or {}).get("token_budget") or {},
-            "provider_route": state.get("provider_route") or {},
             "need_audit": state.get("need_audit") or {},
             "material_health": (state.get("bundle") or {}).get("material_health") or {},
             "request_analysis": state.get("request_analysis") or {},
             "prose_locations": (state.get("bundle") or {}).get("prose_locations") or (state.get("request_analysis") or {}).get("prose_locations") or [],
             "pending_intent": state.get("pending_intent") or {},
-            "provider_answers": state.get("provider_answers") or [],
-            "artifacts": artifacts,
             "workflow_sop": state.get("workflow_sop") or (state.get("bundle") or {}).get("workflow_sop") or {},
             "project_kind": state.get("project_kind", ""),
             "project_init": state.get("project_init") or {},
@@ -1802,42 +1292,12 @@ def _archive_content_for_finalize(*, task: str, chapter: int | None, draft: str,
     return draft
 
 
-def _save_provider_artifacts(novel_id: str | None, task: str, answers: list[dict], merge_info: dict) -> dict:
-    import json
-    import os
-    from datetime import datetime
-
-    from app.config import ROOT
-    from app.novel_context import normalize_novel_id
-
-    nid = normalize_novel_id(novel_id)
-    out_dir = outputs_dir(nid)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    data = {
-        "novel_id": nid,
-        "task": task,
-        "saved_at": datetime.now().isoformat(timespec="seconds"),
-        "provider_answers": answers,
-        "merge_info": merge_info,
-    }
-    path = out_dir / f"{task}_provider_answers_{stamp}.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
-    try:
-        rel = str(path.relative_to(ROOT)).replace("\\", "/")
-    except ValueError:
-        rel = str(path)
-    return {"ok": True, "path": rel, "count": len(answers)}
-
-
 def _after_pre_review(state: WritingState) -> str:
     """预审查门禁：blocking>0 且未到回环上限 → 回 generate 重新生成；否则进模型审查。
 
-    provider 全失败（draft 空）→ 直接 finalize，由前端给"用API生成"兜底按钮。
+    生成结果为空时直接结束，避免对空文本继续审查。
     """
-    if state.get("provider_failed") or not (state.get("draft") or "").strip():
+    if not (state.get("draft") or "").strip():
         return "finalize"
     pr = state.get("pre_review") or {}
     if pr.get("blocking_count", 0) > 0 and state.get("iterations", 0) < MAX_ITERATIONS:
@@ -1853,33 +1313,8 @@ def _after_model_review(state: WritingState) -> str:
     return "finalize"
 
 
-def _after_provider_fanout(state: WritingState) -> str:
-    if state.get("provider_answers"):
-        return "confirm"
-    return "generate"
-
-
 def _route(state: WritingState) -> str:
     return state.get("intent", "search")
-
-
-def _draft_start(state: WritingState) -> str:
-    """首问走材料组装；AI 固定会话续问可显式跳过材料组装。"""
-    if (
-        state.get("skip_material_assemble")
-        and state.get("use_provider_source")
-        and any((state.get("login_confirmed") or {}).values())
-    ):
-        return "context_followup"
-    return "assemble"
-
-
-def _provider_route_next(state: WritingState) -> str:
-    """Route after materials/prompt refinement using information boundaries."""
-    route = state.get("provider_route") or {}
-    if route.get("decision") == "fanout":
-        return "with_provider"
-    return "direct"
 
 
 def node_draft_entry(state: WritingState) -> WritingState:
@@ -1901,11 +1336,6 @@ def build_graph():
     # draft/revise 分支
     graph.add_node("draft_entry", node_draft_entry)
     graph.add_node("need_audit", node_need_audit)
-    graph.add_node("context_followup", node_context_followup)
-    graph.add_node("provider_confirm_gate", node_provider_confirm_gate)
-    graph.add_node("provider_route", node_provider_route)
-    graph.add_node("prompt_refine", node_prompt_refine)
-    graph.add_node("provider_fanout", node_provider_fanout)
     graph.add_node("draft_assemble", node_draft_assemble)
     graph.add_node("generate", node_generate)
     graph.add_node("pre_review", node_pre_review)
@@ -1932,27 +1362,13 @@ def build_graph():
     for terminal in ("build_index", "review", "assemble", "search"):
         graph.add_edge(terminal, END)
 
-    # draft/revise：首问组装材料；显式续问时跳过组装，沿用 provider 固定会话上下文。
+    # draft/revise：统一组装项目材料后进入本地/API 模型生成。
     graph.add_edge("draft_entry", "need_audit")
-    graph.add_conditional_edges(
-        "need_audit", _draft_start,
-        {"assemble": "draft_assemble", "context_followup": "context_followup"},
-    )
-    graph.add_edge("context_followup", "provider_route")
-    graph.add_edge("draft_assemble", "prompt_refine")
-    graph.add_edge("prompt_refine", "provider_route")
-    graph.add_conditional_edges(
-        "provider_route", _provider_route_next,
-        {"with_provider": "provider_fanout", "direct": "generate"},
-    )
-    graph.add_conditional_edges(
-        "provider_fanout", _after_provider_fanout,
-        {"confirm": "provider_confirm_gate", "generate": "generate"},
-    )
-    graph.add_edge("provider_confirm_gate", END)
+    graph.add_edge("need_audit", "draft_assemble")
+    graph.add_edge("draft_assemble", "generate")
     # generate 后两道门禁回环
     graph.add_edge("generate", "pre_review")
-    # 审查回环回到 generate（重新融合/重新生成），不回 draft_assemble（避免重抓 provider）。
+    # 审查回环回到 generate，复用本轮已组装材料。
     graph.add_conditional_edges(
         "pre_review", _after_pre_review,
         {"regen": "generate", "model_review": "model_review", "finalize": "draft_finalize"},
@@ -2056,7 +1472,7 @@ def graph_visualization(project_kind: str = "generic") -> dict[str, Any]:
         edge for edge in profile.get("extra_edges", [])
         if edge.get("source") in node_ids and edge.get("target") in node_ids
     ])
-    group_order = ["系统边界", "入口理解", "路由分支", "创作主线", "网页模型", "审查回环", "定稿确认", "其他"]
+    group_order = ["系统边界", "入口理解", "路由分支", "创作主线", "审查回环", "定稿确认", "其他"]
     for node in nodes:
         if node["group"] not in group_order:
             group_order.insert(-1, node["group"])

@@ -12,13 +12,10 @@ def decide_review_strategy(
     task: str | None,
     draft: str,
     need_audit: dict[str, Any] | None = None,
-    request_harness: dict[str, Any] | None = None,
-    token_budget: dict[str, Any] | None = None,
-    provider_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     kind = project_kind or ""
     task_key = task or ""
-    risks = _risk_labels(need_audit, request_harness, token_budget, provider_route)
+    risks = _risk_labels(need_audit)
     if kind == STRONG_NOVEL_KIND:
         if is_novel_planning_task(kind, task_key):
             return {
@@ -193,19 +190,10 @@ def deterministic_review(
 
 def _risk_labels(
     need_audit: dict[str, Any] | None,
-    request_harness: dict[str, Any] | None,
-    token_budget: dict[str, Any] | None,
-    provider_route: dict[str, Any] | None,
 ) -> list[str]:
     risks: list[str] = []
     if (need_audit or {}).get("level") in {"warn", "error"}:
         risks.append(f"need_audit:{(need_audit or {}).get('level')}")
-    if (request_harness or {}).get("level") in {"warn", "error"}:
-        risks.append(f"harness:{(request_harness or {}).get('level')}")
-    if (token_budget or {}).get("level") in {"warn", "error"}:
-        risks.append(f"budget:{(token_budget or {}).get('level')}")
-    if (provider_route or {}).get("reason") in {"fanout_budget_too_high", "serial_task_low_information_boundary"}:
-        risks.append(f"route:{(provider_route or {}).get('reason')}")
     return risks
 
 

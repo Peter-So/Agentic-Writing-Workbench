@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Content Creation · 后台管理</title>
+  <link rel="stylesheet" href="/static/admin.css?v=20260902-v0004-admin-redesign" />
+</head>
+<body>
+  <div id="adminLogin" class="admin-login">
+    <form id="adminLoginForm" class="login-panel">
+      <div class="brand-mark">CC</div>
+      <div class="login-heading"><span>Content Creation</span><h1>管理后台</h1><p>使用管理员账号登录系统控制台</p></div>
+      <label>用户名<input id="adminUsername" placeholder="请输入用户名" autocomplete="username" required /></label>
+      <label>密码<input id="adminPassword" type="password" placeholder="请输入密码" autocomplete="current-password" required /></label>
+      <button class="btn btn-primary btn-block" type="submit">登录管理后台</button>
+      <p id="adminLoginError" class="form-error"></p>
+    </form>
+  </div>
+  <main id="adminApp" class="admin-shell" hidden>
+    <aside class="admin-sidebar">
+      <div class="sidebar-brand"><div class="brand-mark small">CC</div><div><strong>Content Creation</strong><span>ADMIN CONSOLE</span></div></div>
+      <div class="nav-caption">系统管理</div>
+      <nav class="admin-nav" aria-label="后台管理菜单">
+        <button class="active" data-tab="users"><span class="nav-icon">👥</span><span>用户管理</span></button>
+        <button data-tab="roles"><span class="nav-icon">🪪</span><span>角色管理</span></button>
+        <button data-tab="menus"><span class="nav-icon">▦</span><span>菜单管理</span></button>
+        <button data-tab="permissions"><span class="nav-icon">◆</span><span>角色权限</span></button>
+      </nav>
+      <div class="sidebar-footer"><a href="/"><span>←</span> 返回创作工作台</a></div>
+    </aside>
+    <section class="admin-main">
+      <header class="admin-topbar">
+        <div class="breadcrumb"><span>Content Creation</span><b>/</b><strong id="adminBreadcrumb">用户管理</strong></div>
+        <div class="topbar-user"><span class="avatar">A</span><div><strong id="adminUser"></strong><small>超级管理员</small></div><button id="adminLogout" class="btn btn-ghost">退出登录</button></div>
+      </header>
+      <div class="admin-content">
+        <section class="page-heading">
+          <div><span class="eyebrow">SYSTEM MANAGEMENT</span><h1 id="adminTitle">用户管理</h1><p id="adminSubtitle">管理系统账号、状态、角色与项目数据归属。</p></div>
+          <a class="btn btn-secondary" href="/">打开创作工作台</a>
+        </section>
+        <section class="stat-grid" aria-label="系统统计">
+          <article><span class="stat-icon blue">👥</span><div><small>用户账号</small><strong id="statUsers">0</strong><em>系统用户总数</em></div></article>
+          <article><span class="stat-icon violet">🪪</span><div><small>角色</small><strong id="statRoles">0</strong><em>权限角色总数</em></div></article>
+          <article><span class="stat-icon cyan">▦</span><div><small>菜单权限</small><strong id="statMenus">0</strong><em>可分配权限项</em></div></article>
+          <article><span class="stat-icon green">◈</span><div><small>创作项目</small><strong id="statProjects">0</strong><em>已登记项目数</em></div></article>
+        </section>
+        <div id="adminNotice" class="admin-notice" role="status"></div>
+        <section class="management-card">
+          <section id="usersPane" class="pane">
+            <header class="card-header"><div><h2>用户列表</h2><p>维护账号信息，并分别管理角色、项目、状态和密码。</p></div><div class="toolbar"><label class="search-box">⌕ <input id="userSearch" placeholder="搜索用户名或名称" /></label><button id="createUserBtn" class="btn btn-primary">＋ 新增用户</button></div></header>
+            <div id="usersTable" class="table-wrap"></div>
+          </section>
+          <section id="rolesPane" class="pane" hidden>
+            <header class="card-header"><div><h2>角色列表</h2><p>角色用于组织菜单权限和用户职责。</p></div><div class="toolbar"><button id="createRoleBtn" class="btn btn-primary">＋ 新增角色</button></div></header>
+            <div id="rolesTable" class="table-wrap"></div>
+          </section>
+          <section id="menusPane" class="pane" hidden>
+            <header class="card-header"><div><h2>菜单与权限项</h2><p>菜单编码同时作为接口授权标识。</p></div><div class="toolbar"><button id="createMenuBtn" class="btn btn-primary">＋ 新增菜单</button></div></header>
+            <div id="menusTable" class="table-wrap"></div>
+          </section>
+          <section id="permissionsPane" class="pane" hidden>
+            <header class="card-header"><div><h2>角色权限矩阵</h2><p>为角色勾选可访问的页面与功能。</p></div><label class="field-inline">当前角色<select id="permissionRole"></select></label></header>
+            <div id="permissionMenus" class="permission-grid"></div>
+            <div class="permission-footer"><span>权限变更将在用户下次请求时立即生效。</span><button id="savePermissionsBtn" class="btn btn-primary">保存权限</button></div>
+          </section>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/admin.js?v=20260902-v0005-role-gate"></script>
+</body>
+</html>

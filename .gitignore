@@ -7,6 +7,8 @@ __pycache__/
 .env
 .env.local
 .env.shared
+vps.md
+work/
 projects/*/.env
 projects/*/.env.local
 
@@ -16,8 +18,6 @@ logs/
 tmp/
 .release-notes/
 data/app-upgrade-status.json
-data/browser-profiles/*
-!data/browser-profiles/.gitkeep
 data/chat-history/*
 !data/chat-history/.gitkeep
 
@@ -58,3 +58,5 @@ projects/writing/novels/*/delegate_context*.txt
 data/writing_task_center/
 data/chat_memory.db-shm
 data/chat_memory.db-wal
+data/chat_memory_store.db
+data/auth.db*

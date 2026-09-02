@@ -1,7 +1,7 @@
 id: short_film_002
 project_kind: short_film
 label: 电影短片创作 SOP
-default_mode: parallel_collect_then_serial_merge
+default_mode: serial_generate
 roles:
   concept_developer:
     label: 概念开发
@@ -25,8 +25,8 @@ tasks:
   logline:
     stage: 概念开发
     role: concept_developer
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - id: short-film-concept-not-single-logline
         text: 概念不是一句话压缩稿，必须形成可扩展为剧本的开发材料。
@@ -57,8 +57,8 @@ tasks:
   character:
     stage: 角色设计
     role: character_designer
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 角色必须有可表演动作和关系张力。
       - 不得只输出抽象心理标签。
@@ -68,8 +68,8 @@ tasks:
   beat_sheet:
     stage: 节拍表
     role: beat_editor
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - 每个节拍必须包含画面、冲突、转折和声音线索。
       - 节拍必须服务短片片长，不得扩成长篇大纲。
@@ -79,8 +79,8 @@ tasks:
   screenplay:
     stage: 剧本正文
     role: screenwriter
-    mode: parallel_collect_then_serial_merge
-    confirmation_gate: material_selection
+    mode: serial_generate
+    confirmation_gate: final_acceptance
     hard_rules:
       - id: screenplay-format-required
         text: 必须使用影视脚本格式：场景标题、动作、角色、对白。

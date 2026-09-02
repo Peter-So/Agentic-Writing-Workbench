@@ -2,7 +2,7 @@
   "version": 1,
   "project_id": "001",
   "project_kind": "novel_strong",
-  "updated_at": "2026-06-22T15:43:35",
+  "updated_at": "2026-09-02T14:53:56",
   "documents": {
     "base_setting": {
       "role": "base_setting",
@@ -173,7 +173,7 @@
     "invocation_logs": {
       "role": "invocation_logs",
       "path": "日志/调用记录",
-      "description": "创作任务 invocation、节点轨迹、成本和 provider 日志。"
+      "description": "创作任务 invocation 与节点轨迹日志。"
     },
     "skills": {
       "role": "skills",

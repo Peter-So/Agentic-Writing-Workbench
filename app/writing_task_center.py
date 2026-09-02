@@ -18,7 +18,6 @@ def task_center(novel_id: str | None, *, limit: int = 30) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     items.extend(_invocation_items(nid, limit=limit))
     items.extend(_pending_items(nid))
-    items.extend(_provider_job_items())
     items.extend(_runtime_task_items(nid))
     items.extend(_upgrade_items(nid))
     items = _dedupe(items)
@@ -99,8 +98,6 @@ def _invocation_items(novel_id: str, *, limit: int) -> list[dict[str, Any]]:
                 "chapter": record.get("chapter"),
                 "current_node": current_node,
                 "trajectory_count": len(record.get("trajectory") or []),
-                "harness_count": len(record.get("harness") or []),
-                "provider_count": len(record.get("providers") or {}),
             },
         })
     return out
@@ -151,38 +148,6 @@ def _pending_items(novel_id: str) -> list[dict[str, Any]]:
                 "done_count": len(data.get("done") or []),
                 "stage_count": len(data.get("stages") or []),
                 "total_ms": data.get("total_ms"),
-            },
-        })
-    return out
-
-
-def _provider_job_items() -> list[dict[str, Any]]:
-    try:
-        from app.ai_provider_jobs import jobs
-
-        snapshots = jobs.list_snapshots()
-    except Exception:
-        snapshots = []
-    out: list[dict[str, Any]] = []
-    for job in snapshots:
-        providers = job.get("providers") or []
-        running = sum(1 for item in providers if item.get("status") == "running")
-        done = bool(job.get("done"))
-        status = "completed" if done else ("running" if running else "queued")
-        out.append({
-            "id": str(job.get("job_id") or ""),
-            "type": "provider_job",
-            "status": status,
-            "label": f"网页模型 · {len(providers)} 个 provider",
-            "novel_id": "",
-            "source": "provider_job_manager",
-            "created_at": job.get("created_at") or "",
-            "updated_at": job.get("updated_at") or job.get("created_at") or "",
-            "next_action": _next_action("provider_job", status),
-            "details": {
-                "prompt_hash": job.get("prompt_hash") or "",
-                "provider_count": len(providers),
-                "running_count": running,
             },
         })
     return out

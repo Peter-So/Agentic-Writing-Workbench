@@ -18,8 +18,6 @@ def run_writing_benchmark(novel_id: str, limit: int = 10) -> dict[str, Any]:
         ("terminal_status", _terminal_status),
         ("trajectory_recorded", _trajectory_recorded),
         ("bounded_iterations", _bounded_iterations),
-        ("budget_or_non_provider", _budget_or_non_provider),
-        ("provider_artifacts_when_used", _provider_artifacts_when_used),
         ("no_unconfirmed_memory_write", _no_unconfirmed_memory_write),
         ("artifact_paths_exist", _artifact_paths_exist),
     ]
@@ -65,25 +63,6 @@ def _bounded_iterations(record: dict[str, Any]) -> tuple[bool, str]:
     # Invocation log does not store final iterations directly; infer repeated generate nodes.
     generates = sum(1 for item in record.get("trajectory") or [] if item.get("node") == "generate")
     return generates <= 3, f"generate_nodes={generates}"
-
-
-def _budget_or_non_provider(record: dict[str, Any]) -> tuple[bool, str]:
-    if not record.get("use_provider_source"):
-        return True, "non-provider task"
-    count = len(record.get("budgets") or [])
-    return count > 0, f"budget_records={count}"
-
-
-def _provider_artifacts_when_used(record: dict[str, Any]) -> tuple[bool, str]:
-    providers = record.get("providers") or {}
-    if not providers:
-        return True, "no provider run"
-    done = [p for p in providers.values() if p.get("status") in {"success", "partial", "completed"}]
-    if not done:
-        return True, "providers had no successful answers"
-    artifacts = record.get("artifacts") or {}
-    has_log = bool(artifacts.get("provider_answers") or artifacts.get("invocation_log"))
-    return has_log, "provider artifacts present" if has_log else "missing provider artifacts"
 
 
 def _no_unconfirmed_memory_write(record: dict[str, Any]) -> tuple[bool, str]:

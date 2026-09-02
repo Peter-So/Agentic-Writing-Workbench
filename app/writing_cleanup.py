@@ -39,7 +39,7 @@ def cleanup_after_task(
     """Clean task-local scratch files without touching recovery/audit data.
 
     This is intentionally whitelist-based. Invocation logs, pending intent
-    memory, project/LLM Wiki, RAG corpora, material bundles, provider request
+    memory, project/LLM Wiki, RAG corpora, material bundles, generation request
     packets and formal outputs are durable workflow artifacts, so they are not
     removed here even if they look like process files.
     """

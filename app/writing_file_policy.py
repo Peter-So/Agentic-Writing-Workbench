@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.novel_context import WRITING_ROOT
+from app.novel_context import NOVELS_ROOT, WRITING_ROOT
 
 
 FRAMEWORK_SAVE_DENY_EXACT = {
@@ -81,7 +81,11 @@ def editable_message(path: Path) -> str:
 def _relative(path: Path) -> Path:
     resolved_root = WRITING_ROOT.resolve()
     resolved_path = path.resolve()
-    return resolved_path.relative_to(resolved_root)
+    try:
+        return resolved_path.relative_to(resolved_root)
+    except ValueError:
+        novel_rel = resolved_path.relative_to(NOVELS_ROOT.resolve())
+        return Path("novels") / novel_rel
 
 
 def _protected_reason(rel: Path) -> tuple[bool, str]:
